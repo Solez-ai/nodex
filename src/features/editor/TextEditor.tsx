@@ -101,19 +101,19 @@ const TextEditor = () => {
         <StyledWrapper>
           <textarea
             style={{
-              width: '100%',
-              height: '100%',
-              border: 'none',
-              outline: 'none',
-              fontFamily: 'monospace',
-              fontSize: '14px',
-              padding: '10px',
-              backgroundColor: theme === 'vs-dark' ? '#1e1e1e' : '#ffffff',
-              color: theme === 'vs-dark' ? '#d4d4d4' : '#000000',
-              resize: 'none',
+              width: "100%",
+              height: "100%",
+              border: "none",
+              outline: "none",
+              fontFamily: "monospace",
+              fontSize: "14px",
+              padding: "10px",
+              backgroundColor: theme === "vs-dark" ? "#1e1e1e" : "#ffffff",
+              color: theme === "vs-dark" ? "#d4d4d4" : "#000000",
+              resize: "none",
             }}
             value={contents}
-            onChange={(e) => setContents({ contents: e.target.value, skipUpdate: true })}
+            onChange={e => setContents({ contents: e.target.value, skipUpdate: true })}
             placeholder="Monaco Editor failed to load. Using fallback textarea..."
           />
         </StyledWrapper>

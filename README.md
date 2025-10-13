@@ -13,4 +13,3 @@ Nodex is a powerful, standalone web application for visualizing structured data 
 - 📤 **Import/Export**: Paste data directly or upload files
 - 🔍 **Node Expansion**: Collapse and expand nodes to focus on specific data
 - 🚀 **Fast & Responsive**: Built with React and Next.js for optimal performance
-

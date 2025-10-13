@@ -75,11 +75,11 @@ export const DownloadModal = ({ opened, onClose }: ModalProps) => {
 
       // Try multiple selectors to find the canvas
       let imageElement = document.querySelector(".jsoncrack-canvas") as HTMLElement;
-      
+
       if (!imageElement) {
         imageElement = document.querySelector("svg[id*='ref']") as HTMLElement;
       }
-      
+
       if (!imageElement) {
         imageElement = document.querySelector("svg") as unknown as HTMLElement;
       }
@@ -126,11 +126,11 @@ export const DownloadModal = ({ opened, onClose }: ModalProps) => {
 
       // Try multiple selectors to find the canvas
       let imageElement = document.querySelector(".jsoncrack-canvas") as HTMLElement;
-      
+
       if (!imageElement) {
         imageElement = document.querySelector("svg[id*='ref']") as HTMLElement;
       }
-      
+
       if (!imageElement) {
         imageElement = document.querySelector("svg") as unknown as HTMLElement;
       }

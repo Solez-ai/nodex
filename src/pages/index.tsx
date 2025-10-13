@@ -9,8 +9,8 @@ import "allotment/dist/style.css";
 import { NextSeo } from "next-seo";
 import { SEO } from "../constants/seo";
 import { darkTheme, lightTheme } from "../constants/theme";
-import { Toolbar } from "../features/editor/Toolbar";
 import { BottomBar } from "../features/editor/BottomBar";
+import { Toolbar } from "../features/editor/Toolbar";
 import useGraph from "../features/editor/views/GraphView/stores/useGraph";
 import useConfig from "../store/useConfig";
 import useFile from "../store/useFile";
@@ -61,7 +61,7 @@ const StyledTextEditor = styled.div`
 
 const TextEditor = dynamic(() => import("../features/editor/TextEditor"), {
   ssr: false,
-  loading: () => <div style={{ padding: '20px', textAlign: 'center' }}>Loading Editor...</div>,
+  loading: () => <div style={{ padding: "20px", textAlign: "center" }}>Loading Editor...</div>,
 });
 
 const LiveEditor = dynamic(() => import("../features/editor/LiveEditor"), {
