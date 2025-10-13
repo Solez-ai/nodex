@@ -1,0 +1,23 @@
+{
+  "name": "Nodex Example",
+  "version": "1.0.0",
+  "description": "Interactive data visualizer for JSON, YAML, CSV & XML",
+  "features": [
+    "Multi-format support",
+    "Interactive visualization",
+    "Clean UI",
+    "Dark/Light mode"
+  ],
+  "author": {
+    "name": "Samin Yeasar",
+    "github": "https://github.com/Solez-ai",
+    "twitter": "https://x.com/Solez_None"
+  },
+  "supportedFormats": {
+    "json": true,
+    "yaml": true,
+    "csv": true,
+    "xml": true
+  },
+  "created": "2025-01-27"
+}
