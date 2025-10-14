@@ -11,11 +11,10 @@ const useJsonQuery = () => {
 
   const updateJson = async (query: string, cb?: () => void) => {
     try {
-      // Simple JSON path-like query support without jq-web
-      // This is a basic implementation for demonstration
+
       JSON.parse(getJson());
 
-      // For now, just show an error since we removed jq-web
+
       toast.error(
         "Advanced query functionality requires jq-web dependency. Please install it separately if needed."
       );
