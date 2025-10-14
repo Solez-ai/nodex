@@ -67,18 +67,14 @@ const TextEditor = () => {
     const beforeunload = (e: BeforeUnloadEvent) => {
       if (getHasChanges()) {
         const confirmationMessage =
-          "Unsaved changes, if you leave before saving  your changes will be lost";
-
-        (e || window.event).returnValue = confirmationMessage; //Gecko + IE
+          "Unsaved changes, if you leave before saving your changes will be lost";
+        (e || window.event).returnValue = confirmationMessage; // Gecko + IE
         return confirmationMessage;
       }
     };
 
     window.addEventListener("beforeunload", beforeunload);
-
-    return () => {
-      window.removeEventListener("beforeunload", beforeunload);
-    };
+    return () => window.removeEventListener("beforeunload", beforeunload);
   }, [getHasChanges]);
 
   const handleMount: OnMount = useCallback(editor => {
@@ -94,51 +90,60 @@ const TextEditor = () => {
     setIsLoading(false);
   }, []);
 
+  // Safely render editor with try/catch
+  let editorContent;
+  try {
+    editorContent = (
+      <Editor
+        className="sentry-mask"
+        data-sentry-mask="true"
+        height="100%"
+        language={fileType}
+        theme={theme}
+        value={contents}
+        options={editorOptions}
+        onMount={handleMount}
+        onValidate={errors => setError(errors[0]?.message || "")}
+        onChange={contents => setContents({ contents, skipUpdate: true })}
+        loading={<LoadingOverlay visible={isLoading} />}
+      />
+    );
+  } catch (error) {
+    console.error("Editor failed to render:", error);
+    handleError();
+    editorContent = (
+      <textarea
+        style={{
+          width: "100%",
+          height: "100%",
+          border: "none",
+          outline: "none",
+          fontFamily: "monospace",
+          fontSize: "14px",
+          padding: "10px",
+          backgroundColor: theme === "vs-dark" ? "#1e1e1e" : "#ffffff",
+          color: theme === "vs-dark" ? "#d4d4d4" : "#000000",
+          resize: "none",
+        }}
+        value={contents}
+        onChange={e => setContents({ contents: e.target.value, skipUpdate: true })}
+        placeholder="Monaco Editor failed to load. Using fallback textarea..."
+      />
+    );
+  }
+
   // Fallback textarea if Monaco Editor fails to load
   if (hasError) {
     return (
       <StyledEditorWrapper>
-        <StyledWrapper>
-          <textarea
-            style={{
-              width: "100%",
-              height: "100%",
-              border: "none",
-              outline: "none",
-              fontFamily: "monospace",
-              fontSize: "14px",
-              padding: "10px",
-              backgroundColor: theme === "vs-dark" ? "#1e1e1e" : "#ffffff",
-              color: theme === "vs-dark" ? "#d4d4d4" : "#000000",
-              resize: "none",
-            }}
-            value={contents}
-            onChange={e => setContents({ contents: e.target.value, skipUpdate: true })}
-            placeholder="Monaco Editor failed to load. Using fallback textarea..."
-          />
-        </StyledWrapper>
+        <StyledWrapper>{editorContent}</StyledWrapper>
       </StyledEditorWrapper>
     );
   }
 
   return (
     <StyledEditorWrapper>
-      <StyledWrapper>
-        <Editor
-          className="sentry-mask"
-          data-sentry-mask="true"
-          height="100%"
-          language={fileType}
-          theme={theme}
-          value={contents}
-          options={editorOptions}
-          onMount={handleMount}
-          onValidate={errors => setError(errors[0]?.message || "")}
-          onChange={contents => setContents({ contents, skipUpdate: true })}
-          loading={<LoadingOverlay visible={isLoading} />}
-          onError={handleError}
-        />
-      </StyledWrapper>
+      <StyledWrapper>{editorContent}</StyledWrapper>
     </StyledEditorWrapper>
   );
 };

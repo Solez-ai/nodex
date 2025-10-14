@@ -96,12 +96,13 @@ const useGraph = create<Graph & GraphActions>((set, get) => ({
 
     const canvas = document.querySelector(".jsoncrack-canvas") as HTMLElement | null;
     if (canvas) {
-      // Use centerFitElementIntoView but with custom options to prevent it from being too small
-      viewPort?.camera?.centerFitElementIntoView(canvas, {
+      const fitOptions = {
         elementExtraMarginForZoom: 200, // Add more margin to prevent it from being too small
         maxZoom: 1.5, // Set a maximum zoom level
         minZoom: 0.3, // Set a minimum zoom level
-      });
+      } as unknown as any;
+
+      viewPort?.camera?.centerFitElementIntoView(canvas, fitOptions);
     }
   },
   toggleFullscreen: fullscreen => set({ fullscreen }),

@@ -13,7 +13,7 @@
     "url": "https://github.com/Solez-ai/nodex"
   },
   "scripts": {
-    "dev": "next dev -p 3001",
+    "dev": "next dev -p 3002",
     "build": "next build",
     "start": "next start -p 3001",
     "lint": "tsc --project tsconfig.json && eslint src && prettier --check src",

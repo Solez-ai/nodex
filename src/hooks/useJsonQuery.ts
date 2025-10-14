@@ -11,9 +11,7 @@ const useJsonQuery = () => {
 
   const updateJson = async (query: string, cb?: () => void) => {
     try {
-
       JSON.parse(getJson());
-
 
       toast.error(
         "Advanced query functionality requires jq-web dependency. Please install it separately if needed."
