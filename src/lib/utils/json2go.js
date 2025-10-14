@@ -1,12 +1,3 @@
-/*
-	JSON-to-Go
-	by Matt Holt
-
-	https://github.com/mholt/json-to-go
-
-	A simple utility to translate JSON into a Go type definition.
-*/
-
 function jsonToGo(json, typename, flatten = true, example = false, allOmitempty = false) {
   let data;
   let scope;
