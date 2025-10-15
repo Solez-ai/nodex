@@ -94,7 +94,7 @@ const useGraph = create<Graph & GraphActions>((set, get) => ({
     const viewPort = get().viewPort;
     viewPort?.updateContainerSize();
 
-    const canvas = document.querySelector(".jsoncrack-canvas") as HTMLElement | null;
+    const canvas = document.querySelector(".nodex-canvas") as HTMLElement | null;
     if (canvas) {
       const fitOptions = {
         elementExtraMarginForZoom: 200, // Add more margin to prevent it from being too small

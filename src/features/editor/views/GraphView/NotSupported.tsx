@@ -1,5 +1,5 @@
 import React from "react";
-import { Anchor, Button, Image, Overlay, Stack, Text } from "@mantine/core";
+import { Button, Image, Overlay, Stack, Text } from "@mantine/core";
 import styled, { keyframes } from "styled-components";
 import useConfig from "../../../../store/useConfig";
 
@@ -67,37 +67,23 @@ export const NotSupported = () => {
       center
     >
       <Stack maw="60%" align="center" justify="center" gap="sm">
-        <Image src="https://todiagram.com/logo.svg" alt="Unsupported" w={72} h={72} />
+        <Image
+          src="public/assets/192.png"
+          alt="Too large diagram"
+          w={72}
+          h={72}
+        />
         <Text fz="48" fw={600} c="bright">
-          Time to upgrade!
+          This diagram is too big
         </Text>
         <Text ta="center" size="lg" fw={500} c="gray" maw="600">
-          This diagram is too large and not supported at JSON Crack.
+          Sorry! Your data is too large to render here.
           <br />
-          Try{" "}
-          <Anchor
-            inherit
-            c="teal"
-            fw="500"
-            href="https://todiagram.com/editor?utm_source=jsoncrack&utm_medium=data_limit"
-            target="_blank"
-            rel="noopener"
-          >
-            ToDiagram
-          </Anchor>{" "}
-          for larger diagrams and more features.
+          Try simplifying or trimming down your JSON before loading it again.
         </Text>
         <ShiningButton style={{ marginTop: "16px", position: "relative" }}>
-          <Button
-            component="a"
-            href="https://todiagram.com/editor?utm_source=jsoncrack&utm_medium=data_limit"
-            rel="noopener"
-            size="lg"
-            w="200"
-            target="_blank"
-            color="teal"
-          >
-            Try now &rarr;
+          <Button size="lg" w="200" color="teal" onClick={() => window.location.reload()}>
+            Reload & Try Again ↻
           </Button>
         </ShiningButton>
       </Stack>

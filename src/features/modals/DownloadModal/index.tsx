@@ -74,7 +74,7 @@ export const DownloadModal = ({ opened, onClose }: ModalProps) => {
       toast.loading("Copying to clipboard...", { id: "toastClipboard" });
 
       // Try multiple selectors to find the canvas
-      let imageElement = document.querySelector(".jsoncrack-canvas") as HTMLElement;
+      let imageElement = document.querySelector(".nodex-canvas") as HTMLElement;
 
       if (!imageElement) {
         imageElement = document.querySelector("svg[id*='ref']") as HTMLElement;
@@ -125,7 +125,7 @@ export const DownloadModal = ({ opened, onClose }: ModalProps) => {
       toast.loading("Downloading...", { id: "toastDownload" });
 
       // Try multiple selectors to find the canvas
-      let imageElement = document.querySelector(".jsoncrack-canvas") as HTMLElement;
+      let imageElement = document.querySelector(".nodex-canvas") as HTMLElement;
 
       if (!imageElement) {
         imageElement = document.querySelector("svg[id*='ref']") as HTMLElement;

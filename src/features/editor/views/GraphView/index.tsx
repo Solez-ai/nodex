@@ -45,7 +45,7 @@ const StyledEditorWrapper = styled.div<{ $widget: boolean; $showRulers: boolean 
       20px 20px;
   `};
 
-  .jsoncrack-space {
+  .nodex-space {
     cursor: url("/assets/cursor.svg"), auto;
   }
 
@@ -112,7 +112,7 @@ const GraphCanvas = ({ isWidget }: GraphProps) => {
 
   return (
     <Canvas
-      className="jsoncrack-canvas"
+              className="nodex-canvas"
       onLayoutChange={onLayoutChange}
       node={p => <CustomNode {...p} />}
       edge={p => <CustomEdge {...p} />}
@@ -147,14 +147,14 @@ export const GraphView = ({ isWidget = false }: GraphProps) => {
   const [debouncedLoading] = useDebouncedValue(loading, 300);
 
   const callback = React.useCallback(() => {
-    const canvas = document.querySelector(".jsoncrack-canvas") as HTMLDivElement | null;
+    const canvas = document.querySelector(".nodex-canvas") as HTMLDivElement | null;
     canvas?.classList.add("dragging");
   }, []);
 
   const bindLongPress = useLongPress(callback, {
     threshold: 150,
     onFinish: () => {
-      const canvas = document.querySelector(".jsoncrack-canvas") as HTMLDivElement | null;
+      const canvas = document.querySelector(".nodex-canvas") as HTMLDivElement | null;
       canvas?.classList.remove("dragging");
     },
   });
@@ -188,7 +188,7 @@ export const GraphView = ({ isWidget = false }: GraphProps) => {
           onContextMenu={e => e.preventDefault()}
           treatTwoFingerTrackPadGesturesLikeTouch={gesturesEnabled}
           pollForElementResizing
-          className="jsoncrack-space"
+                  className="nodex-space"
         >
           <GraphCanvas isWidget={isWidget} />
         </Space>
