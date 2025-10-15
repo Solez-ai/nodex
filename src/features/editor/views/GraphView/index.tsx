@@ -112,7 +112,7 @@ const GraphCanvas = ({ isWidget }: GraphProps) => {
 
   return (
     <Canvas
-              className="nodex-canvas"
+      className="nodex-canvas"
       onLayoutChange={onLayoutChange}
       node={p => <CustomNode {...p} />}
       edge={p => <CustomEdge {...p} />}
@@ -188,7 +188,7 @@ export const GraphView = ({ isWidget = false }: GraphProps) => {
           onContextMenu={e => e.preventDefault()}
           treatTwoFingerTrackPadGesturesLikeTouch={gesturesEnabled}
           pollForElementResizing
-                  className="nodex-space"
+          className="nodex-space"
         >
           <GraphCanvas isWidget={isWidget} />
         </Space>

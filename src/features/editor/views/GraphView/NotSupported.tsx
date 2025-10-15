@@ -67,12 +67,7 @@ export const NotSupported = () => {
       center
     >
       <Stack maw="60%" align="center" justify="center" gap="sm">
-        <Image
-          src="public/assets/192.png"
-          alt="Too large diagram"
-          w={72}
-          h={72}
-        />
+        <Image src="public/assets/192.png" alt="Too large diagram" w={72} h={72} />
         <Text fz="48" fw={600} c="bright">
           This diagram is too big
         </Text>
