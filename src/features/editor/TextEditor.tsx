@@ -2,6 +2,7 @@ import React from "react";
 import { LoadingOverlay } from "@mantine/core";
 import styled from "styled-components";
 import loader from "@monaco-editor/loader";
+import SimpleCodeEditor from "react-simple-code-editor";
 import { FileFormat } from "../../enums/file.enum";
 import useConfig from "../../store/useConfig";
 import useFile from "../../store/useFile";
@@ -20,6 +21,9 @@ const editorOptions = {
   stickyScroll: { enabled: false },
   scrollBeyondLastLine: false,
 };
+
+const LOCAL_MONACO_VS = "/monaco-editor/min/vs";
+const CDN_MONACO_VS = "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs";
 
 const toMonacoLanguage = (format: FileFormat): string => {
   if (format === FileFormat.JSON) return "json";
@@ -63,6 +67,7 @@ const TextEditor = () => {
 
   const contents = useFile(state => state.contents);
   const setContents = useFile(state => state.setContents);
+  const setError = useFile(state => state.setError);
   const jsonSchema = useFile(state => state.jsonSchema);
   const getHasChanges = useFile(state => state.getHasChanges);
   const theme = useConfig(state => (state.darkmodeEnabled ? "vs-dark" : "light"));
@@ -70,6 +75,24 @@ const TextEditor = () => {
 
   const [isLoading, setIsLoading] = React.useState(true);
   const [hasError, setHasError] = React.useState(false);
+  const [useLiteEditor, setUseLiteEditor] = React.useState(false);
+
+  const initializeMonaco = React.useCallback(async () => {
+    loader.config({ paths: { vs: LOCAL_MONACO_VS } });
+    let monaco = await loader.init();
+
+    if (!monaco?.editor?.create || !monaco?.editor?.createModel) {
+      console.warn("Local Monaco bundle unavailable, retrying with CDN loader path");
+      loader.config({ paths: { vs: CDN_MONACO_VS } });
+      monaco = await loader.init();
+    }
+
+    if (!monaco?.editor?.create || !monaco?.editor?.createModel) {
+      throw new Error("Monaco editor API unavailable (missing editor.create/createModel)");
+    }
+
+    return monaco;
+  }, []);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -84,7 +107,7 @@ const TextEditor = () => {
 
     const init = async () => {
       try {
-        const monaco = await loader.init();
+        const monaco = await initializeMonaco();
         if (cancelled || !containerRef.current) return;
 
         monacoRef.current = monaco;
@@ -120,9 +143,12 @@ const TextEditor = () => {
 
         setIsLoading(false);
         setHasError(false);
+        setUseLiteEditor(false);
       } catch (error) {
         console.error("Monaco failed to initialize", error);
-        setHasError(true);
+        setError("Monaco failed to initialize. Switched to lightweight editor.");
+        setHasError(false);
+        setUseLiteEditor(true);
         setIsLoading(false);
       }
     };
@@ -148,7 +174,7 @@ const TextEditor = () => {
     };
     // Intentionally run once for stable editor instance lifecycle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fileType, initializeMonaco, jsonSchema, setContents, setError, theme, contents]);
 
   React.useEffect(() => {
     const editor = editorRef.current;
@@ -238,6 +264,31 @@ const TextEditor = () => {
             value={contents}
             onChange={e => setContents({ contents: e.target.value, skipUpdate: true })}
             placeholder="Monaco Editor failed to load. Using fallback textarea..."
+          />
+        </StyledWrapper>
+      </StyledEditorWrapper>
+    );
+  }
+
+  if (useLiteEditor) {
+    return (
+      <StyledEditorWrapper>
+        <StyledWrapper>
+          <SimpleCodeEditor
+            value={contents}
+            onValueChange={code => setContents({ contents: code, skipUpdate: true })}
+            highlight={code => code}
+            padding={10}
+            textareaId="nodex-lite-editor"
+            style={{
+              width: "100%",
+              height: "100%",
+              fontFamily: "monospace",
+              fontSize: 14,
+              background: theme === "vs-dark" ? "#1e1e1e" : "#ffffff",
+              color: theme === "vs-dark" ? "#d4d4d4" : "#000000",
+              overflow: "auto",
+            }}
           />
         </StyledWrapper>
       </StyledEditorWrapper>
