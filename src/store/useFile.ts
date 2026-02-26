@@ -65,7 +65,7 @@ const isURL = (value: string) => {
   );
 };
 
-const debouncedUpdateJson = debounce((value: unknown, rawContents: string) => {
+const debouncedUpdateJson = debounce((value: unknown) => {
   useGraph.getState().setLoading(true);
   const jsonStr = JSON.stringify(value, null, 2);
   useJson.getState().setJson(jsonStr);
@@ -123,7 +123,7 @@ const useFile = create<FileStates & JsonActions>()((set, get) => ({
         set({ hasChanges: true });
       }
 
-      debouncedUpdateJson(json, contents ?? get().contents);
+      debouncedUpdateJson(json);
     } catch (error: any) {
       if (error?.mark?.snippet) return set({ error: error.mark.snippet });
       if (error?.message) set({ error: error.message });
