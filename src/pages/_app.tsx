@@ -55,6 +55,58 @@ const theme = createTheme({
 function NodexApp({ Component, pageProps }: AppProps) {
   const { pathname } = useRouter();
 
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const RELOAD_KEY = "nodex-runtime-reload-once";
+    const shouldRecover = (message: string) => {
+      const lower = message.toLowerCase();
+      return (
+        lower.includes("reading 'json'") ||
+        lower.includes('reading "json"') ||
+        lower.includes("reading 'getmodel'") ||
+        lower.includes('reading "getmodel"') ||
+        lower.includes("chunkloaderror")
+      );
+    };
+
+    const recoverOnce = () => {
+      if (sessionStorage.getItem(RELOAD_KEY) === "1") return;
+      sessionStorage.setItem(RELOAD_KEY, "1");
+      window.location.reload();
+    };
+
+    const onError = (event: ErrorEvent) => {
+      const message = event.error?.message ?? event.message ?? "";
+      if (shouldRecover(message)) recoverOnce();
+    };
+
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const message =
+        typeof reason === "string"
+          ? reason
+          : reason instanceof Error
+            ? reason.message
+            : JSON.stringify(reason ?? "");
+      if (shouldRecover(message)) recoverOnce();
+    };
+
+    // Clear the reload guard after a stable startup window.
+    const timeout = window.setTimeout(() => {
+      sessionStorage.removeItem(RELOAD_KEY);
+    }, 5000);
+
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
+    };
+  }, []);
+
   // Create a single smart manager that handles pathname logic internally
   const colorSchemeManager = smartColorSchemeManager({
     key: "nodex-color-scheme",
