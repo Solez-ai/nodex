@@ -75,6 +75,8 @@ const debouncedUpdateJson = debounce((value: unknown) => {
   }
 }, 400);
 
+const isBrowser = () => typeof window !== "undefined";
+
 const useFile = create<FileStates & JsonActions>()((set, get) => ({
   ...initialStates,
   clear: () => {
@@ -112,12 +114,19 @@ const useFile = create<FileStates & JsonActions>()((set, get) => ({
         format: format ?? get().format,
       });
 
-      const isFetchURL = window.location.href.includes("?");
+      const isFetchURL = isBrowser() ? window.location.href.includes("?") : false;
       const json = await contentToJson(get().contents, get().format);
 
       if (!useConfig.getState().liveTransformEnabled && skipUpdate) return;
 
-      if (get().hasChanges && contents && contents.length < 80_000 && !isIframe() && !isFetchURL) {
+      if (
+        isBrowser() &&
+        get().hasChanges &&
+        contents &&
+        contents.length < 80_000 &&
+        !isIframe() &&
+        !isFetchURL
+      ) {
         sessionStorage.setItem("content", contents);
         sessionStorage.setItem("format", get().format);
         set({ hasChanges: true });
@@ -152,8 +161,10 @@ const useFile = create<FileStates & JsonActions>()((set, get) => ({
     }
 
     let contents = defaultJson;
-    const sessionContent = sessionStorage.getItem("content") as string | null;
-    const format = sessionStorage.getItem("format") as FileFormat | null;
+    const sessionContent = isBrowser()
+      ? (sessionStorage.getItem("content") as string | null)
+      : null;
+    const format = isBrowser() ? (sessionStorage.getItem("format") as FileFormat | null) : null;
     if (sessionContent && !widget) contents = sessionContent;
 
     if (format) set({ format });
