@@ -2,7 +2,6 @@ import type { ViewPort } from "react-zoomable-ui/dist/ViewPort";
 import type { CanvasDirection } from "reaflow/dist/layout/elkLayout";
 import { create } from "zustand";
 import { SUPPORTED_LIMIT } from "../../../../../constants/graph";
-import useJson from "../../../../../store/useJson";
 import type { EdgeData, NodeData } from "../../../../../types/graph";
 import { parser } from "../lib/jsonParser";
 
@@ -31,7 +30,7 @@ const initialStates: Graph = {
 };
 
 interface GraphActions {
-  setGraph: (json?: string, options?: Partial<Graph>[]) => void;
+  setGraph: (json: string, options?: Partial<Graph>) => void;
   setLoading: (loading: boolean) => void;
   setDirection: (direction: CanvasDirection) => void;
   setViewPort: (ref: ViewPort) => void;
@@ -49,8 +48,8 @@ const useGraph = create<Graph & GraphActions>((set, get) => ({
   ...initialStates,
   clearGraph: () => set({ nodes: [], edges: [], loading: false }),
   setSelectedNode: nodeData => set({ selectedNode: nodeData }),
-  setGraph: (data, options) => {
-    const { nodes, edges } = parser(data ?? useJson.getState().json);
+  setGraph: (data = "{}", options) => {
+    const { nodes, edges } = parser(data);
 
     if (nodes.length > SUPPORTED_LIMIT) {
       return set({

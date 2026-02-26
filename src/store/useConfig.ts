@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import useGraph from "../features/editor/views/GraphView/stores/useGraph";
+import useJson from "./useJson";
 
 const initialStates = {
   darkmodeEnabled: true,
@@ -28,7 +29,7 @@ const useConfig = create(
       toggleDarkMode: darkmodeEnabled => set({ darkmodeEnabled }),
       toggleImagePreview: imagePreviewEnabled => {
         set({ imagePreviewEnabled });
-        useGraph.getState().setGraph();
+        useGraph.getState().setGraph(useJson.getState().json);
       },
     }),
     {
