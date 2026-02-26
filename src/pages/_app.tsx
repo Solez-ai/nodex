@@ -7,6 +7,7 @@ import "@mantine/code-highlight/styles.css";
 import { ThemeProvider } from "styled-components";
 import { NextSeo } from "next-seo";
 import { Toaster } from "react-hot-toast";
+import { ClientErrorBoundary } from "../components/ClientErrorBoundary";
 import GlobalStyle from "../constants/globalStyle";
 import { SEO } from "../constants/seo";
 import { lightTheme } from "../constants/theme";
@@ -86,7 +87,9 @@ function NodexApp({ Component, pageProps }: AppProps) {
             }}
           />
           <GlobalStyle />
-          <Component {...pageProps} />
+          <ClientErrorBoundary>
+            <Component {...pageProps} />
+          </ClientErrorBoundary>
         </ThemeProvider>
       </MantineProvider>
     </>

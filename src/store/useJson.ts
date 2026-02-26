@@ -16,7 +16,7 @@ export type JsonStates = typeof initialStates;
 
 const useJson = create<JsonStates & JsonActions>()((set, get) => ({
   ...initialStates,
-  getJson: () => get().json,
+  getJson: () => get()?.json ?? "{}",
   setJson: json => {
     set({ json, loading: false });
     useGraph.getState().setGraph(json);

@@ -29,7 +29,8 @@ const useConfig = create(
       toggleDarkMode: darkmodeEnabled => set({ darkmodeEnabled }),
       toggleImagePreview: imagePreviewEnabled => {
         set({ imagePreviewEnabled });
-        useGraph.getState().setGraph(useJson.getState().json);
+        const currentJson = useJson.getState()?.json ?? "{}";
+        useGraph.getState().setGraph(currentJson);
       },
     }),
     {

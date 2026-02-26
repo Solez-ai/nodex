@@ -47,21 +47,28 @@ const TextEditor = () => {
   }, [isLoading]);
 
   React.useEffect(() => {
-    monaco?.languages.json.jsonDefaults.setDiagnosticsOptions({
-      validate: true,
-      allowComments: true,
-      enableSchemaRequest: true,
-      ...(jsonSchema && {
-        schemas: [
-          {
-            uri: "http://myserver/foo-schema.json",
-            fileMatch: ["*"],
-            schema: jsonSchema,
-          },
-        ],
-      }),
-    });
-  }, [jsonSchema, monaco?.languages.json.jsonDefaults]);
+    const jsonDefaults = monaco?.languages?.json?.jsonDefaults;
+    if (!jsonDefaults) return;
+
+    try {
+      jsonDefaults.setDiagnosticsOptions({
+        validate: true,
+        allowComments: true,
+        enableSchemaRequest: true,
+        ...(jsonSchema && {
+          schemas: [
+            {
+              uri: "http://myserver/foo-schema.json",
+              fileMatch: ["*"],
+              schema: jsonSchema,
+            },
+          ],
+        }),
+      });
+    } catch (error) {
+      console.warn("Failed to configure Monaco JSON diagnostics", error);
+    }
+  }, [jsonSchema, monaco]);
 
   React.useEffect(() => {
     const beforeunload = (e: BeforeUnloadEvent) => {
