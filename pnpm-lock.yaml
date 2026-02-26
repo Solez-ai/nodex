@@ -23,6 +23,9 @@ importers:
       '@mantine/hooks':
         specifier: ^7.17.7
         version: 7.17.7(react@18.3.1)
+      '@monaco-editor/loader':
+        specifier: ^1.5.0
+        version: 1.5.0
       '@monaco-editor/react':
         specifier: ^4.7.0
         version: 4.7.0(monaco-editor@0.52.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
