@@ -11,13 +11,18 @@ import { SEO } from "../constants/seo";
 import { darkTheme, lightTheme } from "../constants/theme";
 import { BottomBar } from "../features/editor/BottomBar";
 import { DiffSummaryBanner } from "../features/editor/DiffSummaryBanner";
-import { InsightsPanel } from "../features/editor/InsightsPanel";
 import { Toolbar } from "../features/editor/Toolbar";
 import useGraph from "../features/editor/views/GraphView/stores/useGraph";
 import useConfig from "../store/useConfig";
 import useFile from "../store/useFile";
 
-const ModalController = dynamic(() => import("../features/modals/ModalController"));
+const ModalController = dynamic(() => import("../features/modals/ModalController"), {
+  ssr: false,
+});
+const InsightsPanel = dynamic(
+  () => import("../features/editor/InsightsPanel").then(m => m.InsightsPanel),
+  { ssr: false }
+);
 
 const queryClient = new QueryClient({
   defaultOptions: {

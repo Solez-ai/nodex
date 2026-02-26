@@ -2,7 +2,6 @@
  * Nodex — AI Service Layer (Gemini)
  * Created by Samin Yeasar (github.com/Solez-ai | solez.vercel.app)
  */
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export interface AIInsights {
   summary: string;
@@ -65,6 +64,7 @@ function buildJsonSchema(value: unknown, depth: number): unknown {
  * Calls Gemini API and returns structured AI insights.
  */
 export async function explainData(apiKey: string, schemaSummary: string): Promise<AIInsights> {
+  const { GoogleGenerativeAI } = await import("@google/generative-ai");
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
