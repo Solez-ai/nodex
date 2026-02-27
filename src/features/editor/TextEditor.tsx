@@ -1,17 +1,21 @@
 import React from "react";
+import dynamic from "next/dynamic";
 import { LoadingOverlay } from "@mantine/core";
 import styled from "styled-components";
+import { json as jsonLang } from "@codemirror/lang-json";
+import { xml as xmlLang } from "@codemirror/lang-xml";
+import { yaml as yamlLang } from "@codemirror/lang-yaml";
+import type { Extension } from "@codemirror/state";
 import loader from "@monaco-editor/loader";
-import SimpleCodeEditor from "react-simple-code-editor";
+import type { ReactCodeMirrorProps } from "@uiw/react-codemirror";
 import { FileFormat } from "../../enums/file.enum";
 import useConfig from "../../store/useConfig";
 import useFile from "../../store/useFile";
 
-loader.config({
-  paths: {
-    vs: "/monaco-editor/min/vs",
-  },
-});
+const LiteCodeEditor = dynamic<ReactCodeMirrorProps>(
+  () => import("@uiw/react-codemirror").then(mod => mod.default),
+  { ssr: false }
+);
 
 const editorOptions = {
   formatOnPaste: true,
@@ -30,8 +34,44 @@ const toMonacoLanguage = (format: FileFormat): string => {
   if (format === FileFormat.YAML) return "yaml";
   if (format === FileFormat.XML) return "xml";
   if (format === FileFormat.TOML) return "toml";
-  if (format === FileFormat.CSV) return "plaintext";
   return "plaintext";
+};
+
+const toLiteExtensions = (format: FileFormat): Extension[] => {
+  if (format === FileFormat.JSON) return [jsonLang()];
+  if (format === FileFormat.YAML || format === FileFormat.TOML) return [yamlLang()];
+  if (format === FileFormat.XML) return [xmlLang()];
+  return [];
+};
+
+const joinWithPrefix = (prefix: string, suffix: string) => {
+  const normalizedPrefix = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+  if (!normalizedPrefix) return suffix;
+  return `${normalizedPrefix}${suffix.startsWith("/") ? suffix : `/${suffix}`}`;
+};
+
+const getLocalMonacoVsPath = () => {
+  if (typeof window === "undefined") return LOCAL_MONACO_VS;
+  const nextData = (window as Window & { __NEXT_DATA__?: { assetPrefix?: string } }).__NEXT_DATA__;
+  const assetPrefix = typeof nextData?.assetPrefix === "string" ? nextData.assetPrefix : "";
+  return joinWithPrefix(assetPrefix, LOCAL_MONACO_VS);
+};
+
+const hasLoaderScript = async (vsPath: string) => {
+  try {
+    const response = await fetch(`${vsPath}/loader.js`, { cache: "no-store" });
+    return response.ok;
+  } catch {
+    return false;
+  }
+};
+
+const normalizeMonacoInstance = (instance: any) => {
+  if (instance?.editor) return instance;
+  if (instance?.m?.editor) return instance.m;
+  if (instance?.default?.editor) return instance.default;
+  if (instance?.default?.m?.editor) return instance.default.m;
+  return null;
 };
 
 const configureJsonDiagnostics = (monaco: any, jsonSchema: object | null) => {
@@ -64,6 +104,7 @@ const TextEditor = () => {
   const editorRef = React.useRef<any>(null);
   const disposablesRef = React.useRef<any[]>([]);
   const applyingExternalUpdate = React.useRef(false);
+  const fallbackForcedRef = React.useRef(false);
 
   const contents = useFile(state => state.contents);
   const setContents = useFile(state => state.setContents);
@@ -75,16 +116,20 @@ const TextEditor = () => {
 
   const [isLoading, setIsLoading] = React.useState(true);
   const [useLiteEditor, setUseLiteEditor] = React.useState(false);
+  const liteExtensions = React.useMemo(() => toLiteExtensions(fileType), [fileType]);
 
   const initializeMonaco = React.useCallback(async () => {
-    loader.config({ paths: { vs: LOCAL_MONACO_VS } });
-    let monaco = await loader.init();
+    const localVs = getLocalMonacoVsPath();
+    const useLocalBundle = await hasLoaderScript(localVs);
 
-    if (!monaco?.editor?.create || !monaco?.editor?.createModel) {
-      console.warn("Local Monaco bundle unavailable, retrying with CDN loader path");
-      loader.config({ paths: { vs: CDN_MONACO_VS } });
-      monaco = await loader.init();
+    if (!useLocalBundle) {
+      console.warn("Local Monaco bundle unavailable, using CDN loader path");
     }
+
+    loader.config({ paths: { vs: useLocalBundle ? localVs : CDN_MONACO_VS } });
+
+    const rawMonaco = await loader.init();
+    const monaco = normalizeMonacoInstance(rawMonaco);
 
     if (!monaco?.editor?.create || !monaco?.editor?.createModel) {
       throw new Error("Monaco editor API unavailable (missing editor.create/createModel)");
@@ -98,39 +143,31 @@ const TextEditor = () => {
 
     const timeout = window.setTimeout(() => {
       if (!cancelled && !editorRef.current) {
-        console.warn("Monaco Editor taking too long to load, showing fallback");
+        fallbackForcedRef.current = true;
+        console.warn("Monaco Editor taking too long to load, switching to lightweight editor");
         setError("Monaco initialization timed out. Switched to lightweight editor.");
         setUseLiteEditor(true);
         setIsLoading(false);
       }
-    }, 5000);
+    }, 6000);
 
     const init = async () => {
       try {
         const monaco = await initializeMonaco();
-        if (cancelled || !containerRef.current) return;
+        if (cancelled || fallbackForcedRef.current || !containerRef.current) return;
 
         monacoRef.current = monaco;
 
-        const monacoEditor = monaco?.editor;
-        if (!monacoEditor?.create || !monacoEditor?.createModel) {
-          throw new Error("Monaco editor API unavailable after init");
-        }
-
         const language = toMonacoLanguage(fileType);
-        const model = monacoEditor.createModel(contents ?? "", language);
-        const editor = monacoEditor.create(
-          containerRef.current,
-          {
-            model,
-            automaticLayout: true,
-            ...editorOptions,
-          },
-          {}
-        );
+        const model = monaco.editor.createModel(contents ?? "", language);
+        const editor = monaco.editor.create(containerRef.current, {
+          model,
+          automaticLayout: true,
+          ...editorOptions,
+        });
 
         editorRef.current = editor;
-        monacoEditor.setTheme(theme);
+        monaco.editor.setTheme(theme);
         configureJsonDiagnostics(monaco, jsonSchema);
 
         disposablesRef.current.push(
@@ -146,6 +183,17 @@ const TextEditor = () => {
           })
         );
 
+        disposablesRef.current.push(
+          monaco.editor.onDidChangeMarkers((resources: any[]) => {
+            const modelUri = model.uri?.toString();
+            if (!modelUri || !resources.some(resource => resource?.toString?.() === modelUri))
+              return;
+            const markers = monaco.editor.getModelMarkers({ resource: model.uri });
+            setError(markers[0]?.message ?? null);
+          })
+        );
+
+        setError(null);
         setIsLoading(false);
         setUseLiteEditor(false);
       } catch (error) {
@@ -251,23 +299,23 @@ const TextEditor = () => {
     return (
       <StyledEditorWrapper>
         <StyledWrapper>
-          <LiteBanner>Lightweight Editor Fallback (Monaco unavailable)</LiteBanner>
-          <SimpleCodeEditor
-            value={contents}
-            onValueChange={code => setContents({ contents: code, skipUpdate: true })}
-            highlight={code => code}
-            padding={10}
-            textareaId="nodex-lite-editor"
-            style={{
-              width: "100%",
-              height: "100%",
-              fontFamily: "monospace",
-              fontSize: 14,
-              background: theme === "vs-dark" ? "#1e1e1e" : "#ffffff",
-              color: theme === "vs-dark" ? "#d4d4d4" : "#000000",
-              overflow: "auto",
-            }}
-          />
+          <LiteBanner>CodeMirror Fallback (Monaco unavailable)</LiteBanner>
+          <StyledLiteWrapper>
+            <LiteCodeEditor
+              value={contents ?? ""}
+              height="100%"
+              theme={theme === "vs-dark" ? "dark" : "light"}
+              extensions={liteExtensions}
+              basicSetup={{
+                lineNumbers: true,
+                highlightActiveLine: true,
+                highlightActiveLineGutter: true,
+                foldGutter: true,
+                autocompletion: true,
+              }}
+              onChange={value => setContents({ contents: value, skipUpdate: true })}
+            />
+          </StyledLiteWrapper>
         </StyledWrapper>
       </StyledEditorWrapper>
     );
@@ -318,4 +366,21 @@ const LiteBanner = styled.div`
   font-size: 11px;
   font-family: monospace;
   color: #9ca3af;
+`;
+
+const StyledLiteWrapper = styled.div`
+  width: 100%;
+  height: 100%;
+
+  .cm-theme,
+  .cm-editor {
+    height: 100%;
+  }
+
+  .cm-scroller {
+    overflow: auto;
+    font-family:
+      ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+      monospace;
+  }
 `;
