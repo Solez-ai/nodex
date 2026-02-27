@@ -74,7 +74,6 @@ const TextEditor = () => {
   const fileType = useFile(state => state.format);
 
   const [isLoading, setIsLoading] = React.useState(true);
-  const [hasError, setHasError] = React.useState(false);
   const [useLiteEditor, setUseLiteEditor] = React.useState(false);
 
   const initializeMonaco = React.useCallback(async () => {
@@ -100,7 +99,8 @@ const TextEditor = () => {
     const timeout = window.setTimeout(() => {
       if (!cancelled && !editorRef.current) {
         console.warn("Monaco Editor taking too long to load, showing fallback");
-        setHasError(true);
+        setError("Monaco initialization timed out. Switched to lightweight editor.");
+        setUseLiteEditor(true);
         setIsLoading(false);
       }
     }, 5000);
@@ -112,9 +112,14 @@ const TextEditor = () => {
 
         monacoRef.current = monaco;
 
+        const monacoEditor = monaco?.editor;
+        if (!monacoEditor?.create || !monacoEditor?.createModel) {
+          throw new Error("Monaco editor API unavailable after init");
+        }
+
         const language = toMonacoLanguage(fileType);
-        const model = monaco.editor.createModel(contents ?? "", language);
-        const editor = monaco.editor.create(
+        const model = monacoEditor.createModel(contents ?? "", language);
+        const editor = monacoEditor.create(
           containerRef.current,
           {
             model,
@@ -125,7 +130,7 @@ const TextEditor = () => {
         );
 
         editorRef.current = editor;
-        monaco.editor.setTheme(theme);
+        monacoEditor.setTheme(theme);
         configureJsonDiagnostics(monaco, jsonSchema);
 
         disposablesRef.current.push(
@@ -142,12 +147,10 @@ const TextEditor = () => {
         );
 
         setIsLoading(false);
-        setHasError(false);
         setUseLiteEditor(false);
       } catch (error) {
         console.error("Monaco failed to initialize", error);
         setError("Monaco failed to initialize. Switched to lightweight editor.");
-        setHasError(false);
         setUseLiteEditor(true);
         setIsLoading(false);
       }
@@ -172,9 +175,9 @@ const TextEditor = () => {
       editorRef.current = null;
       monacoRef.current = null;
     };
-    // Intentionally run once for stable editor instance lifecycle.
+    // Intentionally run once for stable editor lifecycle; reactive updates are handled below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileType, initializeMonaco, jsonSchema, setContents, setError, theme, contents]);
+  }, []);
 
   React.useEffect(() => {
     const editor = editorRef.current;
@@ -244,36 +247,11 @@ const TextEditor = () => {
     return () => window.removeEventListener("beforeunload", beforeunload);
   }, [getHasChanges]);
 
-  if (hasError) {
-    return (
-      <StyledEditorWrapper>
-        <StyledWrapper>
-          <textarea
-            style={{
-              width: "100%",
-              height: "100%",
-              border: "none",
-              outline: "none",
-              fontFamily: "monospace",
-              fontSize: "14px",
-              padding: "10px",
-              backgroundColor: theme === "vs-dark" ? "#1e1e1e" : "#ffffff",
-              color: theme === "vs-dark" ? "#d4d4d4" : "#000000",
-              resize: "none",
-            }}
-            value={contents}
-            onChange={e => setContents({ contents: e.target.value, skipUpdate: true })}
-            placeholder="Monaco Editor failed to load. Using fallback textarea..."
-          />
-        </StyledWrapper>
-      </StyledEditorWrapper>
-    );
-  }
-
   if (useLiteEditor) {
     return (
       <StyledEditorWrapper>
         <StyledWrapper>
+          <LiteBanner>Lightweight Editor Fallback (Monaco unavailable)</LiteBanner>
           <SimpleCodeEditor
             value={contents}
             onValueChange={code => setContents({ contents: code, skipUpdate: true })}
@@ -330,4 +308,14 @@ const StyledWrapper = styled.div`
 const StyledMonacoHost = styled.div`
   width: 100%;
   height: 100%;
+`;
+
+const LiteBanner = styled.div`
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 2;
+  font-size: 11px;
+  font-family: monospace;
+  color: #9ca3af;
 `;
