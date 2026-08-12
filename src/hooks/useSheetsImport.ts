@@ -29,12 +29,17 @@ interface SheetsMessage {
  */
 const useSheetsImport = () => {
   useEffect(() => {
+    let received = false; // a CSV has been imported — stop offering readiness
+
     const handleMessage = (event: MessageEvent) => {
       const data = event.data as SheetsMessage | null;
       if (!data || typeof data !== "object" || data.type !== PROTOCOL) return;
 
       // Handshake: tell the sender we're listening so it can send the CSV.
+      // Once a CSV is in, stop replying — the sidebar waits for its ack and
+      // this prevents duplicate imports while it does.
       if (data.status === "ping") {
+        if (received) return;
         const source = event.source as Window | null;
         source?.postMessage({ type: PROTOCOL, status: "ready" }, event.origin);
         return;
@@ -43,6 +48,8 @@ const useSheetsImport = () => {
       // CSV import: load the selection into the editor and graph. Ack only
       // after the import was attempted so the sidebar's toast reflects reality.
       if (typeof data.csv === "string" && data.csv) {
+        received = true;
+        window.clearInterval(interval);
         const importPromise = useFile
           .getState()
           .setContents({ contents: data.csv, format: FileFormat.CSV, hasChanges: false });
@@ -59,6 +66,10 @@ const useSheetsImport = () => {
     // sidebar can send without having to ping first. (Contains no data.)
     let attempts = 0;
     const interval = window.setInterval(() => {
+      if (received) {
+        window.clearInterval(interval);
+        return;
+      }
       if (window.opener) {
         window.opener.postMessage({ type: PROTOCOL, status: "ready" }, "*");
       }

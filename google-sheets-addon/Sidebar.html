@@ -250,12 +250,42 @@
 
       /* ── Preview table ──────────────────────────────────── */
       .preview {
+        --ph: 220px;
         flex-shrink: 0;
-        max-height: 220px;
         display: flex;
         flex-direction: column;
         background: var(--bg-elev);
         border-top: 1px solid var(--border);
+      }
+
+      /* Only reserve the drag-resized height while the preview is open;
+         a closed <details> must collapse to just its summary bar. */
+      .preview[open] {
+        height: var(--ph);
+      }
+
+      /* Drag handle between the graph and the preview table */
+      .preview-handle {
+        height: 8px;
+        flex-shrink: 0;
+        cursor: ns-resize;
+        touch-action: none;
+        user-select: none;
+      }
+
+      .preview-handle::after {
+        content: "";
+        display: block;
+        height: 2px;
+        margin: 3px 12px 0;
+        border-radius: 1px;
+        background: var(--border);
+        transition: background 120ms ease;
+      }
+
+      .preview-handle:hover::after,
+      .preview-handle:active::after {
+        background: var(--accent);
       }
 
       .preview.hidden {
@@ -374,6 +404,30 @@
       .toast.error {
         color: var(--danger);
       }
+
+      /* ── Expanded (full-height graph) mode ─────────────── */
+      #app.expanded .app-header,
+      #app.expanded .controls,
+      #app.expanded .status:not(.error),
+      #app.expanded .preview,
+      #app.expanded .actions {
+        display: none !important;
+      }
+
+      /* ── Standalone pop-out window ─────────────────────── */
+      /* In the large standalone window the deep-link actions make no sense. */
+      body.standalone #popOutBtn,
+      body.standalone #openNodexBtn {
+        display: none;
+      }
+
+      #cy {
+        cursor: grab;
+      }
+
+      #cy:active {
+        cursor: grabbing;
+      }
     </style>
   </head>
   <body>
@@ -400,14 +454,16 @@
       <div id="cyWrap" class="cy-wrap hidden">
         <div id="cy"></div>
         <div class="cy-toolbar">
+          <button id="expandBtn" class="btn" title="Expand graph">⛶</button>
           <button id="fitBtn" class="btn" title="Fit graph">⤢</button>
           <button id="zoomInBtn" class="btn" title="Zoom in">+</button>
           <button id="zoomOutBtn" class="btn" title="Zoom out">−</button>
         </div>
-        <div class="cy-hint">Click a column node to select that column in the sheet · scroll to zoom · drag to pan</div>
+        <div class="cy-hint">Click a row node to select that row in the sheet · scroll to zoom · drag to pan</div>
       </div>
 
       <details id="preview" class="preview hidden">
+        <div id="previewHandle" class="preview-handle" title="Drag to resize preview"></div>
         <summary>Table preview</summary>
         <div class="preview-scroll">
           <div id="previewBody"></div>
@@ -416,6 +472,13 @@
 
       <footer class="actions">
         <span id="dims" class="dims"></span>
+        <button
+          id="popOutBtn"
+          class="btn"
+          title="Open the visualization in a large, freely resizable window"
+        >
+          ⇱ Pop out
+        </button>
         <button id="openNodexBtn" class="btn primary">Open in Nodex</button>
         <button id="copyCsvBtn" class="btn">Copy CSV</button>
         <button id="downloadCsvBtn" class="btn">Download</button>
@@ -572,69 +635,285 @@
         }
 
         /**
-         * Builds cytoscape elements (nodes + edges) for a table:
-         * a root node with one node per column; each column node lists its
-         * cell values as rows, mirroring Nodex object-node styling.
+         * Best-effort type detection for CSV cell values, mirroring how the
+         * Nodex web app types values after its CSV→JSON conversion
+         * (json-2-csv): numeric strings → number, "true"/"false" → boolean,
+         * literal "null" → null, everything else → string.
+         * @param {*} value
+         * @returns {"number" | "boolean" | "null" | "string"}
+         */
+        function valueType(value) {
+          var v = String(value === null || value === undefined ? "" : value).trim();
+          if (v === "true" || v === "false") return "boolean";
+          if (v === "null") return "null";
+          if (v !== "" && /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(v)) return "number";
+          return "string";
+        }
+
+        /**
+         * Monospace text-width estimate (px) used to size SVG nodes before
+         * rendering (stands in for the web app's canvas measurement).
+         * @param {*} text
+         * @param {number} fontSize
+         * @returns {number}
+         */
+        function estimateTextWidth(text, fontSize) {
+          var size = fontSize || 12;
+          var str = String(text === null || text === undefined ? "" : text);
+          var w = 0;
+          for (var i = 0; i < str.length; i++) {
+            w += str.charCodeAt(i) > 0xff ? size : size * 0.6;
+          }
+          return Math.ceil(w);
+        }
+
+        /** XML-escapes a string for embedding in the node SVG markup. */
+        function escapeXml(s) {
+          return String(s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&apos;");
+        }
+
+        /** Matches the web app's color-format detection (hex/rgb/rgba strings). */
+        function isColorFormat(colorString) {
+          var hexCodeRegex = /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/;
+          var rgbRegex = /^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/;
+          var rgbaRegex = /^rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(0|1|0\.\d+)\s*\)$/;
+          return (
+            hexCodeRegex.test(colorString) ||
+            rgbRegex.test(colorString) ||
+            rgbaRegex.test(colorString)
+          );
+        }
+
+        /**
+         * Text color for a value, mirroring the web app's getTextColor():
+         * nulls gray, numbers amber, booleans green/red, strings white.
+         * @param {{value: string, type: string}} row
+         * @returns {string}
+         */
+        function valueColor(row) {
+          if (row.type === "null") return "#939598";
+          if (row.type === "number") return "#e8c479";
+          if (row.type === "boolean") return row.value === "false" ? "#f85c50" : "#00dc7d";
+          return "#dce5e7";
+        }
+
+        /**
+         * Wraps node body markup with the shared rounded-rect backdrop,
+         * matching the web app's node chrome: fill #292929, stroke #424242,
+         * ~8px corner radius, monospace 12px/500 text.
+         * @param {string} inner
+         * @param {number} width
+         * @param {number} height
+         * @returns {string} raw SVG markup
+         */
+        function svgWrap(inner, width, height) {
+          return (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="' +
+            width +
+            '" height="' +
+            height +
+            '" viewBox="0 0 ' +
+            width +
+            " " +
+            height +
+            '" font-family="Consolas, Menlo, monospace" font-size="12" font-weight="500">' +
+            '<rect x="0.5" y="0.5" width="' +
+            (width - 1) +
+            '" height="' +
+            (height - 1) +
+            '" rx="8" fill="#292929" stroke="#424242" stroke-width="1"/>' +
+            inner +
+            "</svg>"
+          );
+        }
+
+        /**
+         * Single-line text-node SVG (the web app's TextNode): used for the
+         * root "[N items]" node and the "+N more rows" overflow marker.
+         * @param {string} text
+         * @param {number} width
+         * @param {number} height
+         * @param {string} [color]
+         * @returns {string}
+         */
+        function nodeSvgSingle(text, width, height, color) {
+          var body =
+            '<text x="' +
+            width / 2 +
+            '" y="' +
+            height / 2 +
+            '" text-anchor="middle" dominant-baseline="central" fill="' +
+            (color || "#dce5e7") +
+            '">' +
+            escapeXml(text) +
+            "</text>";
+          return svgWrap(body, width, height);
+        }
+
+        /**
+         * Object-node SVG (the web app's ObjectNode): one "key: value" row per
+         * column, keys in blue (#59b8ff), values colored by type, dividers
+         * (#383838) between rows, 30px row height, 10px horizontal padding.
+         * @param {{key: string | null, value: string, type: string}[]} rows
+         * @param {number} width
+         * @param {number} height
+         * @returns {string}
+         */
+        function nodeSvgObject(rows, width, height) {
+          var ROW_H = 30;
+          var PAD_X = 10;
+          var body = "";
+          for (var i = 0; i < rows.length; i++) {
+            var row = rows[i];
+            var y = i * ROW_H + ROW_H / 2;
+            var x = PAD_X;
+            if (row.key) {
+              body +=
+                '<text x="' +
+                x +
+                '" y="' +
+                y +
+                '" dominant-baseline="central" fill="#59b8ff">' +
+                escapeXml(row.key) +
+                ": </text>";
+              x += estimateTextWidth(row.key + ": ", 12);
+            }
+            if (isColorFormat(String(row.value))) {
+              body +=
+                '<rect x="' +
+                x +
+                '" y="' +
+                (y - 6) +
+                '" width="12" height="12" rx="3" fill="' +
+                escapeXml(row.value) +
+                '"/>';
+              x += 16;
+            }
+            body +=
+              '<text x="' +
+              x +
+              '" y="' +
+              y +
+              '" dominant-baseline="central" fill="' +
+              valueColor(row) +
+              '">' +
+              escapeXml(row.value) +
+              "</text>";
+            if (i < rows.length - 1) {
+              var dividerY = (i + 1) * ROW_H;
+              body +=
+                '<line x1="' +
+                PAD_X +
+                '" y1="' +
+                dividerY +
+                '" x2="' +
+                (width - PAD_X) +
+                '" y2="' +
+                dividerY +
+                '" stroke="#383838" stroke-width="1"/>';
+            }
+          }
+          return svgWrap(body, width, height);
+        }
+
+        /**
+         * Builds cytoscape elements mirroring the Nodex web app's rendering of
+         * the same CSV: a root "[N items]" array node with one object node per
+         * data row, each showing "key: value" rows colored by value type.
+         *
          * @param {{headers: string[] | null, dataRows: string[][], totalRows: number}} table
-         * @param {{rootLabel?: string, maxCols?: number, maxRowsShown?: number, maxValueLen?: number}} opts
-         * @returns {{nodes: object[], edges: object[]}}
+         * @param {{maxCols?: number, maxRowsShown?: number, maxValueLen?: number}} opts
+         * @returns {{nodes: object[], edges: object[]}} node data carries the raw
+         *          SVG markup (svg) plus its pixel size (width, height)
          */
         function buildGraphElements(table, opts) {
-          const options = opts || {};
-          const rootLabel = options.rootLabel || "Table";
-          const maxCols = options.maxCols || 60;
-          const maxRowsShown = options.maxRowsShown || 100;
-          const maxValueLen = options.maxValueLen || 60;
+          var options = opts || {};
+          var maxCols = options.maxCols || 60;
+          var maxRowsShown = options.maxRowsShown || 200;
+          var maxValueLen = options.maxValueLen || 60;
 
-          const { headers, dataRows } = table;
+          var headers = table.headers;
+          var dataRows = table.dataRows;
 
-          let colCount = 0;
-          for (let r = 0; r < dataRows.length; r++) {
+          // Column count: max across headers and rows, capped like the web app.
+          var colCount = 0;
+          for (var r = 0; r < dataRows.length; r++) {
             if (dataRows[r].length > colCount) colCount = dataRows[r].length;
           }
           if (headers && headers.length > colCount) colCount = headers.length;
           colCount = Math.min(colCount, maxCols);
 
-          const nodes = [
-            {
-              data: {
-                id: "root",
-                label: rootLabel,
-                root: true,
-              },
+          var shown = Math.min(dataRows.length, maxRowsShown);
+          var nodes = [];
+          var edges = [];
+
+          // Root array node — mirrors the web app's "[N items]" root.
+          var rootLabel = "[" + dataRows.length + " items]";
+          var rootW = estimateTextWidth(rootLabel, 12) + 28;
+          nodes.push({
+            data: {
+              id: "root",
+              kind: "root",
+              svg: nodeSvgSingle(rootLabel, rootW, 34),
+              width: rootW,
+              height: 34,
             },
-          ];
-          const edges = [];
+          });
 
-          for (let c = 0; c < colCount; c++) {
-            const title = headers ? headers[c] : columnToLetter(c);
-            const lines = [];
-            const shown = Math.min(dataRows.length, maxRowsShown);
-            for (let r = 0; r < shown; r++) {
-              const value = dataRows[r][c] === undefined ? "" : dataRows[r][c];
-              lines.push(r + 1 + ": " + truncate(value, maxValueLen));
+          for (var i = 0; i < shown; i++) {
+            var rows = [];
+            var maxW = 0;
+            for (var c = 0; c < colCount; c++) {
+              var key = headers ? headers[c] : columnToLetter(c);
+              var raw = dataRows[i][c] === undefined ? "" : dataRows[i][c];
+              var display = truncate(raw, maxValueLen).replace(/[\r\n]+/g, " ");
+              rows.push({ key: key, value: display, type: valueType(raw) });
+              var rowW = estimateTextWidth(key + ": " + display, 12);
+              // Color cells render a 12px swatch + 4px gap inside the node.
+              if (isColorFormat(display)) rowW += 16;
+              if (rowW > maxW) maxW = rowW;
             }
-            if (dataRows.length > shown) {
-              lines.push("… +" + (dataRows.length - shown) + " more rows");
+            if (rows.length === 0) {
+              rows.push({ key: null, value: "(empty row)", type: "string" });
+              maxW = estimateTextWidth("(empty row)", 12);
             }
-            if (lines.length === 0) lines.push("(no data rows)");
 
-            const id = "col-" + c;
+            var id = "row-" + i;
+            var w = maxW + 20;
+            var h = rows.length * 30;
             nodes.push({
               data: {
                 id: id,
-                label: title + "\n" + lines.join("\n"),
-                title: title,
-                colIndex: c,
+                kind: "row",
+                rowIndex: i,
+                svg: nodeSvgObject(rows, w, h),
+                width: w,
+                height: h,
+              },
+            });
+            edges.push({ data: { id: "edge-" + i, source: "root", target: id } });
+          }
+
+          // Overflow marker when the row cap hides data (muted metadata style).
+          if (dataRows.length > shown) {
+            var more = "… +" + (dataRows.length - shown) + " more rows";
+            var moreW = estimateTextWidth(more, 12) + 28;
+            nodes.push({
+              data: {
+                id: "overflow",
+                kind: "overflow",
+                svg: nodeSvgSingle(more, moreW, 34, "#8b8e90"),
+                width: moreW,
+                height: 34,
               },
             });
             edges.push({
-              data: {
-                id: "edge-" + c,
-                source: "root",
-                target: id,
-                label: title,
-              },
+              data: { id: "edge-overflow", source: "root", target: "overflow" },
             });
           }
 
@@ -708,6 +987,14 @@
           dedupeHeaders: dedupeHeaders,
           normalizeTable: normalizeTable,
           truncate: truncate,
+          valueType: valueType,
+          estimateTextWidth: estimateTextWidth,
+          escapeXml: escapeXml,
+          isColorFormat: isColorFormat,
+          valueColor: valueColor,
+          svgWrap: svgWrap,
+          nodeSvgSingle: nodeSvgSingle,
+          nodeSvgObject: nodeSvgObject,
           buildGraphElements: buildGraphElements,
           rowsToCsv: rowsToCsv,
           toBase64Url: toBase64Url,
@@ -740,11 +1027,26 @@
         // Deep links use a postMessage handshake (no URL-size limits), so even
         // very large selections can be handed to Nodex directly.
 
-        // ── Preview mode (no Apps Script) ────────────────────
-        // Detect via query (?preview=1) or hash (#preview=1). The hash variant is
-        // robust to servers that 301-strip query strings when clean URLs redirect.
+        // Graphs cap the number of row nodes at MAX_GRAPH_ROWS; selections
+        // larger than that show an overflow marker, and the sidebar auto-
+        // expands to give the big layout the full height.
+        var MAX_GRAPH_ROWS = 200;
+
+        // ── Preview / standalone modes ───────────────────────
+        // Standalone pop-out window (?standalone=1 or #standalone=1): opened by
+        // the sidebar's "Pop out" button — a large, freely resizable browser
+        // window rendering the same visualization. Google Sheets fixes the
+        // sidebar at ~300px with no resize API, so this is the escape hatch.
+        var IS_STANDALONE =
+          /[?&]standalone=1/.test(window.location.search) || /#standalone=1/.test(window.location.hash);
+        // Preview mode (no Apps Script) — detect via query (?preview=1) or hash
+        // (#preview=1); the hash variant is robust to servers that 301-strip
+        // query strings. A standalone pop-out has no preview marker, but when
+        // there is no Apps Script runtime it must behave like the demo anyway.
         var IS_PREVIEW =
-          /[?&]preview=1/.test(window.location.search) || /#preview=1/.test(window.location.hash);
+          /[?&]preview=1/.test(window.location.search) ||
+          /#preview=1/.test(window.location.hash) ||
+          (IS_STANDALONE && typeof google === "undefined");
         var SAMPLE_CSV = [
           "Name,Department,Salary,Remote",
           'Ada Lovelace,"Engineering, AI",150000,true',
@@ -769,8 +1071,16 @@
         // postMessage deep-link state (see openInNodex below)
         var targetWindow = null; // the Nodex tab we opened
         var nodexOrigin = ""; // origin of NODEX_APP_URL, validated on inbound messages
-        var dataSent = false;
         var acked = false;
+
+        // Standalone pop-out window state (see popOut below)
+        var popWindow = null; // the standalone window we opened
+        var popOrigin = ""; // origin of the standalone page (same as this page)
+        var popAcked = false;
+
+        // Once the user manually toggles the expand button, stop auto-managing
+        // the layout so their choice is respected for the rest of the session.
+        var userToggledExpand = false;
 
         var cy = null;
 
@@ -797,6 +1107,10 @@
           }
           el.textContent = message;
           el.className = "status " + kind;
+        }
+
+        function svgDataUri(svg) {
+          return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
         }
 
         function copyText(text, onOk) {
@@ -828,14 +1142,23 @@
           if (IS_PREVIEW) {
             setTimeout(function () {
               if (fnName === "getSelectionAsCsv") {
+                // Preview mode: use the sample, or a custom CSV set via
+                // __nodexSidebar.state.csv (e.g. to try a large table).
+                var csv = state.csv || SAMPLE_CSV;
+                var rows = core.csvToRows(csv);
+                var cols = 0;
+                rows.forEach(function (r) {
+                  if (r.length > cols) cols = r.length;
+                });
+                var lastCol = core.columnToLetter(Math.max(0, cols - 1)) || "A";
                 onOk({
-                  csv: SAMPLE_CSV,
+                  csv: csv,
                   sheetName: "Sales",
-                  rangeA1: "A1:D6",
+                  rangeA1: "A1:" + lastCol + Math.max(1, rows.length),
                   startRow: 1,
                   startCol: 1,
-                  rowCount: 6,
-                  colCount: 4,
+                  rowCount: rows.length,
+                  colCount: cols,
                   error: null,
                 });
               } else {
@@ -920,10 +1243,13 @@
                   animate: false,
                 }
           );
-          layout.run();
-          setTimeout(function () {
+          // Fit once the layout settles so the graph fills the available space.
+          // (Attach before run(): a synchronous fallback layout can fire
+          // layoutstop during run(), before the handler would be registered.)
+          cy.one("layoutstop", function () {
             if (cy) cy.fit(undefined, 40);
-          }, 60);
+          });
+          layout.run();
         }
 
         function initCy(elements) {
@@ -936,45 +1262,32 @@
             minZoom: 0.05,
             maxZoom: 4,
             wheelSensitivity: 0.3,
+            // Nodes are rendered as SVG background images (built in the core
+            // block) that replicate the web app's node look exactly: rounded
+            // dark boxes, monospace key:value rows, type-colored values. The
+            // cytoscape border is a transparent overlay used for hover/selected
+            // highlights, matching the app's blue stroke on hover.
             style: [
               {
                 selector: "node",
                 style: {
-                  shape: "round-rectangle",
-                  "background-color": "#292929",
-                  "border-color": "#424242",
-                  "border-width": 1,
-                  width: "label",
-                  height: "label",
-                  padding: "8px",
-                  label: "data(label)",
-                  color: "#dcddde",
-                  "font-family": "Consolas, Menlo, monospace",
-                  "font-size": "9px",
-                  "text-wrap": "wrap",
-                  "text-max-width": "180px",
-                  "text-valign": "center",
-                  "text-halign": "center",
-                },
-              },
-              {
-                selector: "node[root]",
-                style: {
-                  "background-color": "#5865f2",
-                  "border-color": "#7c86ff",
+                  shape: "rectangle",
+                  "background-color": "transparent",
+                  "background-image": "data(svg)",
+                  "background-width": "data(width)",
+                  "background-height": "data(height)",
+                  "background-width-relative-to": "inner",
+                  "background-height-relative-to": "inner",
+                  width: "data(width)",
+                  height: "data(height)",
                   "border-width": 1.5,
-                  color: "#ffffff",
-                  "font-size": "11px",
-                  "font-weight": 700,
-                  "text-max-width": "220px",
+                  "border-color": "transparent",
                 },
               },
               {
                 selector: "node:selected",
                 style: {
-                  "border-color": "#59b8ff",
-                  "border-width": 2.5,
-                  "background-color": "#2b2c3e",
+                  "border-color": "#3B82F6",
                 },
               },
               {
@@ -982,15 +1295,7 @@
                 style: {
                   width: 1.5,
                   "line-color": "#444444",
-                  "curve-style": "bezier",
-                  "target-arrow-shape": "triangle",
-                  "target-arrow-color": "#444444",
-                  label: "data(label)",
-                  color: "#8b8e90",
-                  "font-size": "8px",
-                  "text-background-color": "#2f3136",
-                  "text-background-opacity": 1,
-                  "text-background-padding": "2px",
+                  "curve-style": "straight",
                 },
               },
             ],
@@ -998,41 +1303,59 @@
 
           cy.on("tap", "node", function (evt) {
             var node = evt.target;
-            if (node.id() === "root") {
-              cy.nodes().unselect();
-              return;
-            }
             cy.nodes().unselect();
+            if (node.data("kind") !== "row") return;
             node.select();
-            var colIndex = node.data("colIndex");
             callServer(
-              "activateColumn",
-              [state.sheetId, state.startRow, state.startCol, colIndex, state.rowCount],
+              "activateRow",
+              [state.sheetId, state.startRow + node.data("rowIndex"), state.startCol, state.colCount],
               function () {},
               function () {}
             );
           });
+
+          cy.on("mouseover", "node", function (evt) {
+            evt.target.style("border-color", "#3B82F6");
+          });
+          cy.on("mouseout", "node", function (evt) {
+            if (!evt.target.selected()) {
+              evt.target.style("border-color", "transparent");
+            }
+          });
         }
 
-        function renderGraph() {
+        function renderGraph(precomputedTable) {
           if (!state.csv) return;
-          var table = core.normalizeTable(state.csv, state.hasHeader);
-          var elements = core.buildGraphElements(table, {
-            rootLabel: state.sheetName || "Table",
+          var table = precomputedTable || core.normalizeTable(state.csv, state.hasHeader);
+          var elements = core.buildGraphElements(table, { maxRowsShown: MAX_GRAPH_ROWS });
+          elements.nodes.forEach(function (n) {
+            n.data.svg = svgDataUri(n.data.svg);
           });
+
+          $("cyWrap").classList.remove("hidden");
 
           if (!cy) {
             initCy(elements);
           } else {
             cy.elements().remove();
             cy.add(elements);
-            runLayout();
           }
-
-          $("cyWrap").classList.remove("hidden");
-          $("dims").textContent =
+          // Always run a layout: a fresh cytoscape instance leaves new nodes at
+          // the default position (0,0), stacking them on top of each other.
+          // Resize first — the container was hidden when a fresh instance was
+          // created, so cytoscape's recorded size may still be 0×0.
+          cy.resize();
+          runLayout();
+          var dimsText =
             state.rowCount + "×" + state.colCount +
             (state.sheetName && state.rangeA1 ? " · " + state.sheetName + "!" + state.rangeA1 : "");
+          var hasOverflow = elements.nodes.some(function (n) {
+            return n.data.kind === "overflow";
+          });
+          if (hasOverflow) {
+            dimsText += " · showing first " + (elements.nodes.length - 2) + " rows";
+          }
+          $("dims").textContent = dimsText;
           $("rangeInfo").textContent = state.rangeA1
             ? state.sheetName + "!" + state.rangeA1
             : "";
@@ -1040,7 +1363,113 @@
           $("preview").classList.remove("hidden");
         }
 
+        /**
+         * Toggles full-height graph mode (hides header/controls/preview/footer)
+         * and keeps the expand button's label in sync.
+         * @param {boolean} expanded
+         */
+        function setExpanded(expanded) {
+          var app = document.getElementById("app");
+          if (app.classList.contains("expanded") === expanded) return; // no-op
+          app.classList.toggle("expanded", expanded);
+          var btn = $("expandBtn");
+          btn.title = expanded ? "Collapse graph" : "Expand graph";
+          btn.setAttribute("aria-expanded", expanded ? "true" : "false");
+          // Give the flex layout a frame to reflow, then let the graph fill it.
+          setTimeout(function () {
+            if (cy) {
+              cy.resize();
+              cy.fit(undefined, 40);
+            }
+          }, 60);
+        }
+
+        /**
+         * Auto-manages the layout for the selection size: large tables (more
+         * than MAX_GRAPH_ROWS data rows) expand the graph to full height and
+         * close the table preview; smaller ones return to the normal layout.
+         * Stops entirely once the user manually toggles the expand button.
+         * @param {{dataRows: string[][]}} table
+         */
+        function applyAutoExpand(table) {
+          if (userToggledExpand) return;
+          var app = document.getElementById("app");
+          var large = table.dataRows.length > MAX_GRAPH_ROWS;
+          var wasExpanded = app.classList.contains("expanded");
+          if (large && !wasExpanded) {
+            $("preview").removeAttribute("open");
+            setExpanded(true);
+            showToast("Large selection \u2014 graph expanded (\u26F6 to restore).");
+          } else if (!large && wasExpanded) {
+            setExpanded(false);
+          }
+        }
+
+        /**
+         * Stores a selection payload in state and renders it. Used by both the
+         * server bridge and the standalone pop-out window's postMessage input.
+         * @param {{csv: string, sheetName?: string, rangeA1?: string, startRow?: number, startCol?: number, rowCount?: number, colCount?: number}} data
+         */
+        function renderData(data) {
+          state.csv = data.csv || "";
+          state.sheetId = data.sheetId != null ? data.sheetId : null;
+          state.sheetName = data.sheetName || "";
+          state.rangeA1 = data.rangeA1 || "";
+          state.startRow = data.startRow || 1;
+          state.startCol = data.startCol || 1;
+          state.rowCount = data.rowCount || 0;
+          state.colCount = data.colCount || 0;
+          setStatus(null);
+          var table = core.normalizeTable(state.csv, state.hasHeader);
+          renderGraph(table);
+          if (!IS_STANDALONE) applyAutoExpand(table);
+          if (IS_STANDALONE) {
+            document.title = "Nodex — " + (state.sheetName || "Visualization");
+          }
+        }
+
         function loadSelection() {
+          if (IS_STANDALONE) {
+            // Standalone window: the opener (sidebar "Pop out") hands the CSV
+            // over via postMessage. Until it arrives, re-render whatever we
+            // already have, and fall back to reading the selection ourselves
+            // (production) or the sample (preview) after a short grace period.
+            setStatus("loading", "Waiting for data…");
+            if (state.csv) renderGraph();
+            clearTimeout(loadSelection._t);
+            loadSelection._t = setTimeout(function () {
+              if (state.csv) return;
+              if (!IS_PREVIEW) {
+                callServer(
+                  "getSelectionAsCsv",
+                  [],
+                  function (data) {
+                    if (data && data.error) setStatus("error", data.error);
+                    else if (data && !state.csv) renderData(data);
+                  },
+                  function (err) {
+                    setStatus(
+                      "error",
+                      String((err && err.message) || err || "Failed to read selection.")
+                    );
+                  }
+                );
+              } else {
+                renderData({
+                  csv: SAMPLE_CSV,
+                  sheetName: "Sales",
+                  rangeA1: "A1:E6",
+                  startRow: 1,
+                  startCol: 1,
+                  rowCount: 6,
+                  colCount: 5,
+                });
+                showToast("Sample data — use the sidebar's Pop out for your selection.");
+              }
+            }, 4000);
+            return;
+          }
+
           setStatus("loading", "Reading selected range…");
           callServer(
             "getSelectionAsCsv",
@@ -1053,16 +1482,7 @@
                 $("preview").classList.add("hidden");
                 return;
               }
-              state.csv = data.csv || "";
-              state.sheetId = data.sheetId != null ? data.sheetId : null;
-              state.sheetName = data.sheetName || "";
-              state.rangeA1 = data.rangeA1 || "";
-              state.startRow = data.startRow || 1;
-              state.startCol = data.startCol || 1;
-              state.rowCount = data.rowCount || 0;
-              state.colCount = data.colCount || 0;
-              setStatus(null);
-              renderGraph();
+              renderData(data);
             },
             function (err) {
               setStatus("error", String((err && err.message) || err || "Failed to read selection."));
@@ -1073,11 +1493,13 @@
         // ── Actions ──────────────────────────────────────────
         /**
          * Sends the current selection to the Nodex tab via postMessage.
-         * Safe to call more than once; the first send wins.
+         * Re-sends on every "ready" until the app acks: the first attempt often
+         * races a cold-starting tab (its listener isn't mounted yet), and the
+         * app announces readiness precisely to cover that case. The ack ends
+         * the loop, so duplicates are bounded and the import is idempotent.
          */
         function sendToNodex() {
-          if (!state.csv || !targetWindow || targetWindow.closed || dataSent) return;
-          dataSent = true;
+          if (!state.csv || !targetWindow || targetWindow.closed || acked) return;
           targetWindow.postMessage(
             {
               type: "nodex-sheets",
@@ -1086,7 +1508,6 @@
             },
             nodexOrigin
           );
-          showToast("Sending data to Nodex\u2026");
         }
 
         /**
@@ -1134,28 +1555,126 @@
             }
           }
 
-          dataSent = false;
           acked = false;
 
-          // Try immediately (in case the app already has a listener), and also
-          // ping the handshake — the app replies "ready" once it is listening,
-          // which triggers sendToNodex() again (guarded against double-send).
+          // Try immediately (in case the app already has a listener) and ping
+          // the handshake — the app replies "ready" once it is listening, which
+          // triggers sendToNodex() again. Keep pinging until the app confirms,
+          // so a cold-starting tab (no listener yet) still receives the data.
+          // (Toast once here — re-sends on "ready" don't re-toast.)
+          showToast("Sending data to Nodex\u2026");
           sendToNodex();
           targetWindow.postMessage(
             { type: "nodex-sheets", status: "ping" },
             nodexOrigin
           );
+          clearInterval(openInNodex._ping);
+          openInNodex._ping = setInterval(function () {
+            if (acked || !targetWindow || targetWindow.closed) {
+              clearInterval(openInNodex._ping);
+              return;
+            }
+            targetWindow.postMessage(
+              { type: "nodex-sheets", status: "ping" },
+              nodexOrigin
+            );
+          }, 1000);
 
-          // If the app never confirms receipt, don't lose the data.
+          // If the app never confirms receipt, don't lose the data: hand it
+          // over via the app's ?csv= deep link when it fits in a URL, else
+          // copy it to the clipboard.
           clearTimeout(openInNodex._t);
           openInNodex._t = setTimeout(function () {
-            if (!acked) {
-              showToast("Nodex didn't confirm \u2014 CSV copied to clipboard.", "error");
-              copyText(state.csv, function () {
-                showToast("CSV copied to clipboard.", "ok");
-              });
+            clearInterval(openInNodex._ping);
+            if (acked) return;
+            var MAX_LINK_CSV_CHARS = 45000; // keeps the encoded URL well under browser limits
+            var viaLink =
+              targetWindow && !targetWindow.closed && state.csv.length <= MAX_LINK_CSV_CHARS;
+            if (viaLink) {
+              targetWindow.location.href = NODEX_APP_URL + "?csv=" + core.toBase64Url(state.csv);
             }
+            copyText(state.csv, function () {
+              showToast(
+                viaLink
+                  ? "Opened Nodex with your data \u2014 CSV copied as backup."
+                  : "Nodex didn't confirm \u2014 CSV copied to clipboard.",
+                viaLink ? "ok" : "error"
+              );
+            });
           }, 12000);
+        }
+
+        /**
+         * Sends the current selection to the standalone pop-out window (same
+         * origin as this page). Re-sends on "ready" until the window acks,
+         * mirroring the Nodex deep-link handshake.
+         */
+        function sendToPopWindow() {
+          if (!state.csv || !popWindow || popWindow.closed || popAcked) return;
+          popWindow.postMessage(
+            {
+              type: "nodex-sheets",
+              source: "nodex-sheets-addon",
+              mode: "standalone",
+              csv: state.csv,
+              sheetName: state.sheetName,
+              rangeA1: state.rangeA1,
+              startRow: state.startRow,
+              startCol: state.startCol,
+              rowCount: state.rowCount,
+              colCount: state.colCount,
+            },
+            popOrigin
+          );
+        }
+
+        /**
+         * "Pop out": opens the same visualization in a large, freely resizable
+         * browser window. Google Sheets pins the sidebar at ~300px with no API
+         * to widen it, so this is the escape hatch for big canvases. The
+         * standalone page is this same file with #standalone=1 — no server
+         * round trip: we hand it the CSV over postMessage and it acks.
+         */
+        function popOut() {
+          if (!state.csv) return;
+
+          popOrigin = window.location.origin;
+          popAcked = false;
+
+          if (popWindow && !popWindow.closed) {
+            popWindow.focus();
+          } else {
+            var url = window.location.href.split("#")[0] + "#standalone=1";
+            popWindow = window.open(url, "nodex-sheets-standalone");
+            if (!popWindow) {
+              showToast("Popup blocked — CSV copied instead.", "error");
+              copyText(state.csv, function () {});
+              return;
+            }
+          }
+
+          showToast("Opening visualization…");
+          sendToPopWindow();
+          clearInterval(popOut._ping);
+          popOut._ping = setInterval(function () {
+            if (popAcked || !popWindow || popWindow.closed) {
+              clearInterval(popOut._ping);
+              return;
+            }
+            popWindow.postMessage(
+              { type: "nodex-sheets", status: "ping", mode: "standalone" },
+              popOrigin
+            );
+          }, 800);
+
+          clearTimeout(popOut._t);
+          popOut._t = setTimeout(function () {
+            clearInterval(popOut._ping);
+            if (popAcked) return;
+            copyText(state.csv, function () {
+              showToast("Couldn't reach the popup window — CSV copied to clipboard.", "error");
+            });
+          }, 8000);
         }
 
         function downloadCsv() {
@@ -1180,6 +1699,7 @@
           if (state.csv) renderGraph();
         });
         $("openNodexBtn").addEventListener("click", openInNodex);
+        $("popOutBtn").addEventListener("click", popOut);
         $("copyCsvBtn").addEventListener("click", function () {
           if (!state.csv) return;
           copyText(state.csv, function () {
@@ -1196,6 +1716,96 @@
         $("zoomOutBtn").addEventListener("click", function () {
           if (cy) cy.zoom(cy.zoom() * 0.8);
         });
+        $("expandBtn").addEventListener("click", function () {
+          userToggledExpand = true; // take over from auto-managed layout
+          var app = document.getElementById("app");
+          setExpanded(!app.classList.contains("expanded"));
+        });
+
+        // Opening/closing the preview changes the graph area — cytoscape only
+        // auto-resizes on window resize, so tell it explicitly.
+        document.querySelector("#preview summary").addEventListener("click", function () {
+          setTimeout(function () {
+            if (cy) cy.resize();
+          }, 50);
+        });
+
+        // Standalone windows can be resized freely — keep the graph fitted.
+        if (IS_STANDALONE) {
+          var onWindowResize = function () {
+            clearTimeout(onWindowResize._t);
+            onWindowResize._t = setTimeout(function () {
+              if (cy) {
+                cy.resize();
+                cy.fit(undefined, 40);
+              }
+            }, 120);
+          };
+          window.addEventListener("resize", onWindowResize);
+        }
+
+        // Drag the divider above the preview table to resize it vertically.
+        $("previewHandle").addEventListener("pointerdown", function (evt) {
+          evt.preventDefault();
+          var startY = evt.clientY;
+          var startH = $("preview").offsetHeight;
+          var onMove = function (e) {
+            var h = startH + (startY - e.clientY);
+            h = Math.max(60, Math.min(h, Math.floor(window.innerHeight * 0.5)));
+            $("preview").style.setProperty("--ph", h + "px");
+            if (cy) cy.resize();
+          };
+          var onUp = function () {
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+          };
+          window.addEventListener("pointermove", onMove);
+          window.addEventListener("pointerup", onUp);
+        });
+
+        // Debug / preview hooks (used by sidebar-preview.html tooling and tests).
+        window.__nodexSidebar = {
+          state: state,
+          reload: loadSelection,
+          toggleExpand: function () {
+            $("expandBtn").click();
+          },
+          isExpanded: function () {
+            return document.getElementById("app").classList.contains("expanded");
+          },
+          graphInfo: function () {
+            if (!cy) return null;
+            var root = cy.getElementById("root");
+            return {
+              nodes: cy.nodes().length,
+              edges: cy.edges().length,
+              kinds: cy.nodes().map(function (n) {
+                return n.data("kind");
+              }),
+              rootSvg: root && root.length > 0 ? root.data("svg") : null,
+              rowIndices: cy.nodes().map(function (n) {
+                return n.data("rowIndex");
+              }),
+            };
+          },
+          forceRender: function () {
+            if (cy) cy.forceRender();
+          },
+          isStandalone: function () {
+            return IS_STANDALONE;
+          },
+          positions: function () {
+            if (!cy) return null;
+            return cy.nodes().map(function (n) {
+              return {
+                id: n.id(),
+                kind: n.data("kind"),
+                x: Math.round(n.position("x")),
+                y: Math.round(n.position("y")),
+              };
+            });
+          },
+        };
 
         // ── postMessage deep-link handshake ─────────────────
         // The Nodex app replies to our messages; only trust the configured origin.
@@ -1209,11 +1819,66 @@
           } else if (data.status === "loaded") {
             acked = true;
             clearTimeout(openInNodex._t);
+            clearInterval(openInNodex._ping);
             showToast("Data loaded in Nodex.", "ok");
           }
         });
 
+        // Sidebar role: the standalone pop-out window confirms readiness and
+        // acks receipt. Only listen when this page is the sidebar (the
+        // standalone page itself uses the listener below).
+        if (!IS_STANDALONE) {
+          window.addEventListener("message", function (event) {
+            var data = event.data;
+            if (!data || typeof data !== "object" || data.type !== "nodex-sheets") return;
+            if (event.origin !== popOrigin || data.mode !== "standalone") return;
+
+            if (data.status === "ready") {
+              sendToPopWindow();
+            } else if (data.status === "loaded") {
+              popAcked = true;
+              clearTimeout(popOut._t);
+              clearInterval(popOut._ping);
+              showToast("Visualization opened in a new window.", "ok");
+            }
+          });
+        }
+
+        // Standalone role: the sidebar pings this window, we confirm readiness,
+        // it hands over the CSV, we render and ack.
+        if (IS_STANDALONE) {
+          window.addEventListener("message", function (event) {
+            var data = event.data;
+            if (!data || typeof data !== "object" || data.type !== "nodex-sheets") return;
+            if (data.mode !== "standalone") return;
+            if (event.origin !== location.origin) return;
+
+            if (data.status === "ping") {
+              if (event.source) {
+                event.source.postMessage(
+                  { type: "nodex-sheets", status: "ready", mode: "standalone" },
+                  event.origin
+                );
+              }
+              return;
+            }
+
+            if (typeof data.csv === "string" && data.csv) {
+              clearTimeout(loadSelection._t);
+              renderData(data);
+              if (event.source) {
+                event.source.postMessage(
+                  { type: "nodex-sheets", status: "loaded", mode: "standalone" },
+                  event.origin
+                );
+              }
+            }
+          });
+        }
+
         // ── Boot ─────────────────────────────────────────────
+        if (IS_STANDALONE) document.body.classList.add("standalone");
+
         if (!IS_PREVIEW && typeof google === "undefined") {
           setStatus(
             "error",

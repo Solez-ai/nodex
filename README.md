@@ -159,7 +159,7 @@ Additional controls:
 
 ## Google Sheets Extension
 
-Nodex ships with a **Google Sheets add-on** ([`google-sheets-addon/`](./google-sheets-addon)) that turns any selected spreadsheet table into an interactive Nodex-style graph inside a sidebar — no copy-paste required. The selection is converted to CSV by Apps Script and rendered client-side (Cytoscape + ELK layout); a header toggle, CSV export, column highlighting, and an **Open in Nodex** deep link are included.
+Nodex ships with a **Google Sheets add-on** ([`google-sheets-addon/`](./google-sheets-addon)) that turns any selected spreadsheet table into an interactive Nodex-style graph inside a sidebar — no copy-paste required. The selection is converted to CSV by Apps Script and rendered client-side (Cytoscape + ELK layout) using the same node styling as this app (root `[N items]` node, per-row `key: value` nodes with type-colored values); a header toggle, expandable full-height graph mode, resizable table preview, CSV export, row highlighting, and an **Open in Nodex** deep link are included.
 
 The deep link hands the selection to this app over a **postMessage handshake** (see `src/hooks/useSheetsImport.ts`) — no URL-size limits — with a `?csv=` base64url query parameter kept as a direct-link fallback (`src/store/useFile.ts`). The sidebar is pre-configured with the launch deployment (`https://nodex-launch.vercel.app`) — note the deployed instance must include this postMessage handler or the button falls back to copying the CSV.
 

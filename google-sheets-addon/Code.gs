@@ -3,7 +3,7 @@
  *
  * Converts the user's selected spreadsheet range into RFC 4180 CSV and serves
  * it to the sidebar, which renders an interactive graph. Also provides a
- * helper to re-select a column in the sheet when a graph node is clicked.
+ * helper to re-select a row in the sheet when a graph node is clicked.
  */
 
 const MENU_NAME = "Nodex";
@@ -45,7 +45,7 @@ function showAbout() {
     "Nodex for Google Sheets",
     "Select a table in your sheet, then choose Nodex \u2192 Visualize selected table.\n\n" +
       "The sidebar converts your selection to CSV and renders it as an interactive " +
-      "graph. Click a column node to select that column in the sheet, or open the " +
+      "graph. Click a row node to select that row in the sheet, or open the " +
       "data in the full Nodex web app.",
     ui.ButtonSet.OK
   );
@@ -113,21 +113,20 @@ function getSelectionAsCsv() {
 }
 
 /**
- * Highlights a single column (within the user's original selection) in the sheet.
- * Called from the sidebar when a column node is clicked. Targets the sheet the
+ * Highlights a single row (within the user's original selection) in the sheet.
+ * Called from the sidebar when a row node is clicked. Targets the sheet the
  * data came from (even if the user has since switched to another sheet).
  *
  * @param {number} sheetId id of the source sheet
- * @param {number} startRow row of the selection top edge
+ * @param {number} row row number of the selection top edge
  * @param {number} startCol column of the selection left edge
- * @param {number} columnOffset 0-based column offset inside the selection
- * @param {number} numRows height of the selection
+ * @param {number} numCols width of the selection
  */
-function activateColumn(sheetId, startRow, startCol, columnOffset, numRows) {
+function activateRow(sheetId, row, startCol, numCols) {
   try {
     const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = spreadsheet.getSheetById(sheetId) || spreadsheet.getActiveSheet();
-    sheet.getRange(startRow, startCol + columnOffset, numRows, 1).activate();
+    sheet.getRange(row, startCol, 1, numCols).activate();
   } catch (err) {
     // Non-critical; ignore failures (e.g. selection changed while sidebar open).
   }

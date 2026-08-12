@@ -75,44 +75,137 @@ assert(
   "trailing empty rows dropped"
 );
 
-// ── buildGraphElements ─────────────────────────────────────────────────────
+// ── valueType ──────────────────────────────────────────────────────────────
+assert(core.valueType("150000"), "number", "numeric string → number");
+assert(core.valueType("3.14"), "number", "decimal → number");
+assert(core.valueType("-12"), "number", "negative → number");
+assert(core.valueType("1e3"), "number", "exponent → number");
+assert(core.valueType(" 42 "), "number", "trimmed numeric → number");
+assert(core.valueType("true"), "boolean", "'true' → boolean");
+assert(core.valueType("false"), "boolean", "'false' → boolean");
+assert(core.valueType("null"), "null", "'null' → null");
+assert(core.valueType("hello"), "string", "word → string");
+assert(core.valueType(""), "string", "empty → string");
+
+// ── estimateTextWidth ──────────────────────────────────────────────────────
+assert(core.estimateTextWidth("abc", 12), 22, "monospace 12px: 3 chars × 7.2 → 22");
+assert(core.estimateTextWidth("界", 12), 12, "wide char ≈ full size");
+
+// ── SVG builders ───────────────────────────────────────────────────────────
+const rowSvg = core.nodeSvgObject(
+  [
+    { key: "Name", value: "Ada", type: "string" },
+    { key: "Salary", value: "150000", type: "number" },
+  ],
+  200,
+  60
+);
+assert(rowSvg.startsWith("<svg"), true, "svg root element");
+assert(rowSvg.includes('fill="#59b8ff"'), true, "key color (blue)");
+assert(rowSvg.includes('fill="#e8c479"'), true, "number value color (amber)");
+assert(rowSvg.includes('fill="#292929"'), true, "node fill");
+assert(rowSvg.includes('stroke="#424242"'), true, "node stroke");
+assert(rowSvg.includes('stroke="#383838"'), true, "row divider");
+assert(rowSvg.includes("Name: "), true, "key text present");
+assert(rowSvg.includes("150000"), true, "value text present");
+
+const rootSvg = core.nodeSvgSingle("[2 items]", 100, 34);
+assert(rootSvg.includes("[2 items]"), true, "root text");
+assert(rootSvg.includes('text-anchor="middle"'), true, "centered text");
+
+assert(
+  core.nodeSvgObject([{ key: "x", value: "true", type: "boolean" }], 100, 30).includes(
+    'fill="#00dc7d"'
+  ),
+  true,
+  "true → green"
+);
+assert(
+  core.nodeSvgObject([{ key: "x", value: "false", type: "boolean" }], 100, 30).includes(
+    'fill="#f85c50"'
+  ),
+  true,
+  "false → red"
+);
+assert(
+  core.nodeSvgObject([{ key: "x", value: "null", type: "null" }], 100, 30).includes(
+    'fill="#939598"'
+  ),
+  true,
+  "null → gray"
+);
+assert(
+  core.nodeSvgObject([{ key: "c", value: "#ff0000", type: "string" }], 120, 30).includes("<rect"),
+  true,
+  "color swatch rendered"
+);
+
+// ── buildGraphElements (mirrors the web app's CSV graph) ───────────────────
 const table = core.normalizeTable("Name,Salary\nAda,150000\nAlan,120000", true);
-const els = core.buildGraphElements(table, { rootLabel: "People" });
-assert(els.nodes.length, 3, "1 root + 2 columns");
+const els = core.buildGraphElements(table, {});
+assert(els.nodes.length, 3, "1 root + 2 row nodes");
 assert(els.edges.length, 2, "2 edges");
 assert(els.nodes[0].data.id, "root", "root id");
-assert(els.nodes[0].data.label, "People", "root label");
-assert(els.nodes[1].data.id, "col-0", "first column id");
-assert(els.nodes[1].data.colIndex, 0, "first column index");
-assert(els.nodes[1].data.label.includes("1: Ada"), true, "column shows row values");
+assert(els.nodes[0].data.kind, "root", "root kind");
+assert("label" in els.nodes[0].data, false, "no label (text lives in the svg)");
+assert(els.nodes[0].data.svg.includes("[2 items]"), true, "root shows item count");
+assert(els.nodes[1].data.id, "row-0", "first row id");
+assert(els.nodes[1].data.kind, "row", "first row kind");
+assert(els.nodes[1].data.rowIndex, 0, "first row index");
+assert(els.nodes[1].data.svg.includes("Name: "), true, "row renders key");
+assert(els.nodes[1].data.svg.includes(">Ada<"), true, "row renders value");
+assert(els.nodes[1].data.svg.includes("Salary: "), true, "row renders second key");
+assert(els.nodes[1].data.svg.includes(">150000<"), true, "row renders second value");
 assert(els.edges[0].data.source, "root", "edge source");
-assert(els.edges[0].data.target, "col-0", "edge target");
-assert(els.edges[0].data.label, "Name", "edge label is header");
+assert(els.edges[0].data.target, "row-0", "edge target");
 
-// truncation
+// no headers → column letters as keys
+const noHeader = core.buildGraphElements(core.normalizeTable("1,2\n3,4", false), {});
+assert(noHeader.nodes[0].data.svg.includes("[2 items]"), true, "root count without header");
+assert(noHeader.nodes[1].data.svg.includes("A: "), true, "letter keys without header");
+assert(noHeader.nodes[1].data.svg.includes(">1<"), true, "first letter value");
+assert(noHeader.nodes[1].data.svg.includes("B: "), true, "second letter key");
+assert(noHeader.nodes[1].data.svg.includes(">2<"), true, "second letter value");
+
+// row cap → overflow node
 const many = [];
 for (let i = 0; i < 150; i++) many.push("v" + i);
 const big = core.normalizeTable("h\n" + many.join("\n"), true);
 const bigEls = core.buildGraphElements(big, { maxRowsShown: 100 });
-assert(bigEls.nodes[1].data.label.includes("+50 more rows"), true, "row overflow note");
-assert(bigEls.nodes[1].data.label.includes("100: v99"), true, "row numbers stay correct");
-assert(bigEls.nodes[1].data.label.includes("1: v0"), true, "first row present");
+assert(bigEls.nodes.length, 102, "100 rows + root + overflow");
+assert(bigEls.nodes[101].data.id, "overflow", "overflow node id");
+assert(bigEls.nodes[101].data.svg.includes("+50 more rows"), true, "overflow note");
+assert(bigEls.nodes[100].data.rowIndex, 99, "last shown row index stays correct");
+assert(bigEls.edges.length, 101, "100 row edges + overflow edge");
 
 // long values truncated
 const longVal = core.buildGraphElements(core.normalizeTable("h\n" + "x".repeat(500), true), {});
-assert(longVal.nodes[1].data.label.includes("…"), true, "long value truncated");
+assert(longVal.nodes[1].data.svg.includes("…"), true, "long value truncated");
 
-// no data rows
+// embedded newlines flattened to spaces (SVG text is single-line)
+const nl = core.buildGraphElements(core.normalizeTable("a\n\"x\ny\"", true), {});
+assert(nl.nodes[1].data.svg.includes("x y"), true, "newline → space in display");
+assert(nl.nodes[1].data.svg.includes("\n"), false, "no raw newline in svg");
+
+// row with no cells at all → (empty row) fallback
+const weird = core.buildGraphElements({ headers: null, dataRows: [[]] }, {});
+assert(weird.nodes.length, 2, "root + 1 row node for empty cells");
+assert(weird.nodes[1].data.svg.includes("(empty row)"), true, "empty-row fallback text");
+
+// no data rows → root only
 const empty = core.buildGraphElements(
   { headers: ["a", "b"], dataRows: [], totalRows: 1 },
   {}
 );
-assert(empty.nodes.length, 3, "headers-only table still renders columns");
-assert(empty.nodes[1].data.label.includes("(no data rows)"), true, "no-data placeholder");
+assert(empty.nodes.length, 1, "headers-only table → root only");
+assert(empty.nodes[0].data.svg.includes("[0 items]"), true, "root shows 0 items");
 
 // column caps
-const wide = core.buildGraphElements(core.normalizeTable("a,b,c,d", true), { maxCols: 3 });
-assert(wide.nodes.length, 4, "maxCols caps columns (1 + 3)");
+const wide = core.buildGraphElements(core.normalizeTable("a,b,c,d\n1,2,3,4", true), {
+  maxCols: 3,
+});
+assert(wide.nodes[1].data.svg.includes("a: "), true, "maxCols keeps first columns");
+assert(wide.nodes[1].data.svg.includes("d: "), false, "maxCols drops later columns");
 
 // ── rowsToCsv round-trip ───────────────────────────────────────────────────
 assert(

@@ -15,10 +15,10 @@ Nodex web app.
 │  ┌──────┬──────┬──────┐      │  │  ⬡ Nodex · for Google Sheets │
 │  │ Name │ Dept │ Sal  │      │  │  [x] First row is header     │
 │  ├──────┼──────┼──────┤      │  │  ┌────────────────────────┐  │
-│  │ Ada  │ Eng  │ 150k │ ◄──► │  │  │  interactive graph     │  │
-│  │ Alan │ CS   │ 120k │      │  │  │  (Cytoscape + ELK)     │  │
+│  │ Ada  │ Eng  │ 150k │ ◄──► │  │  │  [6 items] ── row nodes │  │
+│  │ Alan │ CS   │ 120k │      │  │  │  (mirrors the web app)  │  │
 │  └──────┴──────┴──────┘      │  │  └────────────────────────┘  │
-│  selection                   │  │  ▸ Table preview             │
+│  selection                   │  │  ▸ Table preview (resizable)  │
 │                              │  │  [Open in Nodex] [Copy CSV]  │
 └──────────────────────────────┘  └──────────────────────────────┘
 ```
@@ -28,8 +28,8 @@ Nodex web app.
 | File | Purpose |
 |------|---------|
 | `appsscript.json` | Apps Script manifest (V8 runtime, `spreadsheets.currentonly` scope) |
-| `Code.gs` | Server: Nodex menu, sidebar host, selected-range → CSV conversion, column highlight |
-| `Sidebar.html` | Client: interactive graph UI, header toggle, CSV export, Nodex deep link |
+| `Code.gs` | Server: Nodex menu, sidebar host, selected-range → CSV conversion, row highlight |
+| `Sidebar.html` | Client: app-style interactive graph UI, expandable layout, **pop-out window**, header toggle, CSV export, Nodex deep link |
 | `test/run-core-tests.mjs` | Unit tests for the sidebar's CSV/graph logic (`node .../run-core-tests.mjs`) |
 
 ## Installation (2 minutes)
@@ -40,8 +40,11 @@ Nodex web app.
 4. In the Apps Script editor, click **+ → HTML**, name it exactly `Sidebar`,
    and paste in the contents of `Sidebar.html`.
 5. In **Project Settings**, make sure the manifest matches `appsscript.json`
-   (the key setting is the `spreadsheets.currentonly` OAuth scope so the add-on
-   only touches the file you're working in).
+   — it must declare **both** OAuth scopes:
+   - `spreadsheets.currentonly` (only touches the spreadsheet you're in), and
+   - `script.container.ui` (required for the sidebar — if you only list
+     spreadsheet scopes, `showSidebar()` throws
+     "Specified permissions are not sufficient to call Ui.showSidebar").
 6. Refresh the spreadsheet. A **Nodex** menu appears next to Help.
 7. Click **Nodex → Visualize selected table** and authorize when prompted.
 
@@ -64,10 +67,25 @@ To install it like a real Marketplace add-on (e.g. for other users):
 3. **Interact:**
    - Pan / zoom with the mouse or trackpad (buttons in the top-right of the
      canvas too).
-   - **Click a column node to select that column in the sheet.**
-   - Toggle **First row is header** to switch between header and
-     letter-named columns (A, B, C…).
-   - Expand **Table preview** to see the raw cells.
+   - **Click a row node to select that row in the sheet.**
+   - Toggle **First row is header** to switch between header keys and
+     letter-named keys (A, B, C…).
+   - **Expand the graph** (⛶ in the canvas toolbar) to hide the header,
+     controls, and preview so the graph fills the whole sidebar — click again
+     to restore. **Large selections (more than 200 data rows) expand
+     automatically** and close the table preview so the big layout gets the
+     full height (a toast notes it; ⛶ restores); smaller selections load in
+     the normal layout. Once you manually toggle ⛶, the sidebar stops
+     auto-managing the layout and respects your choice for the session.
+   - **Resize the table preview** by dragging the divider above it (between
+     ~60px and half the sidebar height).
+   - **Pop out** (⇱ in the footer) — opens the same visualization in a large,
+     freely resizable browser window. Google Sheets pins the sidebar at ~300px
+     with no resize API, so this is the escape hatch for big canvases: the
+     sidebar hands its current selection to the new window over postMessage
+     and the window stays in sync with your sheet (click rows to select them,
+     drag to resize the window — the graph refits automatically). The pop-out
+     reuses the same window across clicks.
 4. **Export:**
    - **Copy CSV** — clipboard.
    - **Download** — `.csv` file.
@@ -98,13 +116,26 @@ Nodex   ──{ nodex-sheets, status:"loaded" }─▶ sidebar     (ack)
    handler (`src/hooks/useSheetsImport.ts`) and `?csv=` support — redeploy the
    latest code, or the button silently falls back to copying the CSV.
 
-If `NODEX_APP_URL` is empty, the popup is blocked, or Nodex never confirms
-receipt (~12s), the button falls back to copying the CSV to your clipboard.
+If `NODEX_APP_URL` is empty or the popup is blocked, the button copies the CSV
+to your clipboard. If Nodex never confirms receipt (~12s), the button first
+tries handing the data over via the app's `?csv=` deep link (for selections
+small enough to fit in a URL), then copies the CSV as a backup — so the data
+never gets lost.
+
+The handshake is **cold-start safe**: the sidebar keeps pinging until the app
+confirms, and re-sends the CSV whenever the app signals `ready` (its listener
+may not exist yet when the first send fires). Sends stop as soon as the `loaded`
+ack arrives. On the app side, readiness announcements stop once a CSV is
+imported (`src/hooks/useSheetsImport.ts`) — redeploy the app to enable that
+dedupe (until then, a slow import may receive a couple of duplicate sends,
+which are idempotent).
 
 **Tab reuse** — the button reuses an already-open Nodex tab instead of
 spawning a new one: within a session it hands the data to the same tab (no
 reload); across sessions it reopens a browser-level named window
-(`nodex-sheets-deeplink`), so repeated clicks never pile up tabs.
+(`nodex-sheets-deeplink`), so repeated clicks never pile up tabs. Note: if the
+handshake times out, the `?csv=` fallback navigates that tab back to Nodex with
+your data — so a reused tab you'd navigated to another site gets brought back.
 
 The Nodex app also still accepts a `?csv=` base64url query parameter
 (`src/store/useFile.ts`) as a no-handshake fallback for direct links.
@@ -121,9 +152,23 @@ The Nodex app also still accepts a `?csv=` base64url query parameter
 
 ## Notes & decisions
 
+- **Visualization mirrors the Nodex web app** — the sidebar renders the same
+  graph shape the web app produces for a CSV: a root `[N items]` node with one
+  object node per data row, each showing `key: value` rows where keys are blue
+  and values are colored by type (numbers amber, `true`/`false` green/red,
+  `null` gray, hex/rgb values get a color swatch), monospace 12px with row
+  dividers. Nodes are drawn as inline SVG data URIs, so they look identical to
+  the app's reaflow nodes (rounded `#292929` boxes, `#424242` stroke, blue
+  hover ring). Edges are unlabeled straight lines like the app's, with no
+  arrowheads. The graph is capped at 200 rows (plus a muted "… +N more rows"
+  marker and a note in the status bar); selections larger than that still
+  export in full.
 - **Sidebar width** — Google Sheets fixes sidebar width at ~300px; Apps Script's
-  `setWidth()` only applies to dialogs, so the sidebar uses a fluid layout.
-  The local preview iframe mirrors the 300px width.
+  `setWidth()` only applies to dialogs, so the sidebar uses a fluid layout
+  with an **expandable full-height graph mode** and a **⇱ Pop out** button
+  that reopens the visualization in a large, freely resizable browser window
+  (`Sidebar.html#standalone=1`). The local preview iframe mirrors the 300px
+  width.
 - **CSV formula safety** — **Download** sanitizes cells that begin with `=`,
   `+`, `-`, or `@` by prefixing a single quote, so the exported file can't
   execute formulas when opened in Excel/Sheets. The graph, clipboard copy, and
@@ -148,6 +193,11 @@ npx serve .        # or: python -m http.server 8080
 This opens `sidebar-preview.html` — a fake spreadsheet next to the real
 `Sidebar.html#preview=1`, which swaps `google.script.run` for sample data.
 (Preview mode is detected via `?preview=1` or `#preview=1`.)
+
+To try the **pop-out window** without Google Sheets, open the sidebar preview
+and click **⇱ Pop out** — or load `Sidebar.html#standalone=1` directly (it
+renders the sample after a short wait, or accepts the selection over
+postMessage from the sidebar).
 
 ## Tests
 
