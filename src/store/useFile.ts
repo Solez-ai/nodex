@@ -1,4 +1,5 @@
 import debounce from "lodash.debounce";
+import type { ParsedUrlQuery } from "querystring";
 import { toast } from "react-hot-toast";
 import { create } from "zustand";
 import exampleJson from "../data/example.json";
@@ -19,7 +20,7 @@ type SetContents = {
   format?: FileFormat;
 };
 
-type Query = string | string[] | undefined;
+type Query = string | string[] | ParsedUrlQuery | undefined;
 
 interface JsonActions {
   getContents: () => string;
@@ -27,7 +28,7 @@ interface JsonActions {
   getHasChanges: () => boolean;
   setError: (error: string | null) => void;
   setHasChanges: (hasChanges: boolean) => void;
-  setContents: (data: SetContents) => void;
+  setContents: (data: SetContents) => Promise<void>;
   fetchUrl: (url: string) => void;
   setFormat: (format: FileFormat) => void;
   clear: () => void;
@@ -63,6 +64,16 @@ const isURL = (value: string) => {
   return /(https?:\/\/(?:www\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|www\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|https?:\/\/(?:www\.|(?!www))[a-zA-Z0-9]+\.[^\s]{2,}|www\.[a-zA-Z0-9]+\.[^\s]{2,})/gi.test(
     value
   );
+};
+
+/**
+ * Decodes a base64url (RFC 4648 §5) string into a UTF-8 string.
+ * Used by the Google Sheets add-on sidebar to deep-link CSV content via ?csv=.
+ */
+const decodeBase64Url = (input: string) => {
+  const b64 = input.replace(/-/g, "+").replace(/_/g, "/");
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
 };
 
 const debouncedUpdateJson = debounce((value: unknown) => {
@@ -156,6 +167,18 @@ const useFile = create<FileStates & JsonActions>()((set, get) => ({
     }
   },
   checkEditorSession: (url, widget) => {
+    // Import CSV deep-linked by the Google Sheets add-on sidebar (?csv=base64url)
+    if (url && typeof url === "object" && !Array.isArray(url) && typeof url.csv === "string") {
+      try {
+        const csv = decodeBase64Url(url.csv);
+        if (csv) {
+          return get().setContents({ contents: csv, format: FileFormat.CSV, hasChanges: false });
+        }
+      } catch {
+        // Invalid parameter — fall through to default/session behaviour.
+      }
+    }
+
     if (url && typeof url === "string" && isURL(url)) {
       return get().fetchUrl(url);
     }

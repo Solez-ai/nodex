@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<!--
+  Nodex for Google Sheets — Sidebar
+  =================================
+  This file is served by Apps Script (HtmlService) as the add-on sidebar.
+  It reads the user's selected range via google.script.run, renders it as an
+  interactive layered graph (Cytoscape.js + ELK layout), and offers CSV
+  export plus a deep link into the full Nodex web app.
+
+  Local preview without Apps Script: open with ?preview=1
+  (e.g. https://your-server/google-sheets-addon/Sidebar.html?preview=1)
+-->
+<html>
+  <head>
+    <base target="_top" />
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --bg: #2f3136;
+        --bg-elev: #36393f;
+        --bg-deep: #202225;
+        --border: #424242;
+        --text: #dcddde;
+        --muted: #8b8e90;
+        --accent: #59b8ff;
+        --blurple: #5865f2;
+        --amber: #faa81a;
+        --danger: #f85c50;
+        --ok: #00dc7d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        font-size: 13px;
+      }
+
+      #app {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      /* ── Header ─────────────────────────────────────────── */
+      .app-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 12px;
+        background: var(--bg-deep);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        white-space: nowrap;
+      }
+
+      .brand .logo {
+        color: var(--blurple);
+        font-size: 15px;
+        line-height: 1;
+      }
+
+      .brand .sub {
+        color: var(--muted);
+        font-weight: 500;
+        font-size: 11px;
+      }
+
+      .range-info {
+        color: var(--muted);
+        font-size: 11px;
+        font-family: Consolas, Menlo, monospace;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 45%;
+      }
+
+      /* ── Controls ───────────────────────────────────────── */
+      .controls {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 12px;
+        background: var(--bg-elev);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+
+      .toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        user-select: none;
+        font-size: 12px;
+        color: var(--text);
+      }
+
+      .toggle input {
+        accent-color: var(--blurple);
+        margin: 0;
+        cursor: pointer;
+      }
+
+      .btn {
+        appearance: none;
+        border: 1px solid var(--border);
+        background: var(--bg-deep);
+        color: var(--text);
+        border-radius: 6px;
+        padding: 5px 10px;
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+        white-space: nowrap;
+      }
+
+      .btn:hover:not(:disabled) {
+        background: #3a3d44;
+        border-color: var(--muted);
+      }
+
+      .btn:active:not(:disabled) {
+        transform: translateY(1px);
+      }
+
+      .btn:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+
+      .btn.primary {
+        background: var(--blurple);
+        border-color: var(--blurple);
+        color: #fff;
+      }
+
+      .btn.primary:hover:not(:disabled) {
+        background: #6b75f4;
+        border-color: #6b75f4;
+      }
+
+      /* ── Status ─────────────────────────────────────────── */
+      .status {
+        padding: 10px 12px;
+        font-size: 12px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+
+      .status.hidden {
+        display: none;
+      }
+
+      .status.error {
+        color: var(--danger);
+        background: rgba(248, 92, 80, 0.08);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .status.loading {
+        color: var(--muted);
+      }
+
+      .status.empty {
+        color: var(--muted);
+      }
+
+      /* ── Graph ──────────────────────────────────────────── */
+      .cy-wrap {
+        position: relative;
+        flex: 1;
+        min-height: 260px;
+        background:
+          linear-gradient(var(--bg-deep) 1.5px, transparent 1.5px),
+          linear-gradient(90deg, var(--bg-deep) 1.5px, transparent 1.5px),
+          linear-gradient(#26282c 1px, transparent 1px),
+          linear-gradient(90deg, #26282c 1px, transparent 1px);
+        background-size:
+          100px 100px,
+          100px 100px,
+          20px 20px,
+          20px 20px;
+        background-color: #141414;
+      }
+
+      .cy-wrap.hidden {
+        display: none;
+      }
+
+      #cy {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      .cy-toolbar {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        z-index: 5;
+      }
+
+      .cy-toolbar .btn {
+        width: 28px;
+        height: 26px;
+        padding: 0;
+        text-align: center;
+        font-size: 14px;
+        line-height: 1;
+      }
+
+      .cy-hint {
+        position: absolute;
+        bottom: 8px;
+        left: 10px;
+        right: 10px;
+        color: var(--muted);
+        font-size: 10px;
+        text-align: center;
+        pointer-events: none;
+        z-index: 5;
+      }
+
+      /* ── Preview table ──────────────────────────────────── */
+      .preview {
+        flex-shrink: 0;
+        max-height: 220px;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-elev);
+        border-top: 1px solid var(--border);
+      }
+
+      .preview.hidden {
+        display: none;
+      }
+
+      .preview summary {
+        padding: 6px 12px;
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        user-select: none;
+        list-style: none;
+        flex-shrink: 0;
+      }
+
+      .preview summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .preview summary::before {
+        content: "▸ ";
+        color: var(--accent);
+      }
+
+      .preview[open] summary::before {
+        content: "▾ ";
+      }
+
+      .preview-scroll {
+        overflow: auto;
+        flex: 1;
+      }
+
+      .preview table {
+        border-collapse: collapse;
+        width: max-content;
+        min-width: 100%;
+        font-size: 11px;
+        font-family: Consolas, Menlo, monospace;
+      }
+
+      .preview th,
+      .preview td {
+        border: 1px solid var(--border);
+        padding: 3px 8px;
+        white-space: nowrap;
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .preview th {
+        background: var(--bg-deep);
+        color: var(--accent);
+        font-weight: 700;
+        position: sticky;
+        top: 0;
+      }
+
+      .preview td {
+        color: var(--text);
+      }
+
+      /* ── Footer ─────────────────────────────────────────── */
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 12px;
+        background: var(--bg-deep);
+        border-top: 1px solid var(--border);
+        flex-shrink: 0;
+        flex-wrap: wrap;
+      }
+
+      .dims {
+        color: var(--muted);
+        font-size: 11px;
+        font-family: Consolas, Menlo, monospace;
+        margin-right: auto;
+        white-space: nowrap;
+      }
+
+      /* ── Toast ──────────────────────────────────────────── */
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 56px;
+        transform: translateX(-50%);
+        background: #4d4d4d;
+        color: #b9bbbe;
+        border-radius: 4px;
+        padding: 8px 14px;
+        font-size: 12px;
+        z-index: 50;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+        opacity: 1;
+        transition: opacity 250ms ease;
+        max-width: 90%;
+        text-align: center;
+      }
+
+      .toast.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .toast.ok {
+        color: var(--ok);
+      }
+
+      .toast.error {
+        color: var(--danger);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <header class="app-header">
+        <div class="brand">
+          <span class="logo">⬡</span>
+          <span>Nodex</span>
+          <span class="sub">for Google Sheets</span>
+        </div>
+        <div id="rangeInfo" class="range-info">—</div>
+      </header>
+
+      <div class="controls">
+        <label class="toggle" title="Treat the first selected row as column names">
+          <input type="checkbox" id="hasHeader" checked />
+          First row is header
+        </label>
+        <button id="refreshBtn" class="btn">⟳ Refresh</button>
+      </div>
+
+      <div id="status" class="status loading hidden"></div>
+
+      <div id="cyWrap" class="cy-wrap hidden">
+        <div id="cy"></div>
+        <div class="cy-toolbar">
+          <button id="fitBtn" class="btn" title="Fit graph">⤢</button>
+          <button id="zoomInBtn" class="btn" title="Zoom in">+</button>
+          <button id="zoomOutBtn" class="btn" title="Zoom out">−</button>
+        </div>
+        <div class="cy-hint">Click a column node to select that column in the sheet · scroll to zoom · drag to pan</div>
+      </div>
+
+      <details id="preview" class="preview hidden">
+        <summary>Table preview</summary>
+        <div class="preview-scroll">
+          <div id="previewBody"></div>
+        </div>
+      </details>
+
+      <footer class="actions">
+        <span id="dims" class="dims"></span>
+        <button id="openNodexBtn" class="btn primary">Open in Nodex</button>
+        <button id="copyCsvBtn" class="btn">Copy CSV</button>
+        <button id="downloadCsvBtn" class="btn">Download</button>
+      </footer>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- Interactive graph engine (HTTPS CDNs, allowed inside the sidebar sandbox) -->
+    <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/elkjs@0.9.2/lib/elk.bundled.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/cytoscape-elk@2.3.0/cytoscape-elk.min.js"></script>
+
+    <!--
+      ─────────────────────────────────────────────────────────────
+      CORE (pure, testable) — no DOM / no google.* dependencies.
+      Unit tests in test/run-core-tests.mjs target this block.
+      ─────────────────────────────────────────────────────────────
+    -->
+    <script id="nodex-core">
+      window.__nodexCore = (function () {
+        "use strict";
+
+        /**
+         * Lenient RFC 4180 CSV parser. Handles quoted fields, escaped quotes
+         * (""), embedded commas, and LF / CRLF line endings.
+         * @param {string} csv
+         * @returns {string[][]}
+         */
+        function csvToRows(csv) {
+          const rows = [];
+          let row = [];
+          let field = "";
+          let inQuotes = false;
+
+          const finalize = function () {
+            if (row.length > 0 || field.length > 0) {
+              row.push(field);
+              rows.push(row);
+            }
+            row = [];
+            field = "";
+          };
+
+          for (let i = 0; i < csv.length; i++) {
+            const ch = csv[i];
+            if (inQuotes) {
+              if (ch === '"') {
+                if (csv[i + 1] === '"') {
+                  field += '"';
+                  i++;
+                } else {
+                  inQuotes = false;
+                }
+              } else {
+                field += ch;
+              }
+            } else if (ch === '"') {
+              inQuotes = true;
+            } else if (ch === ",") {
+              row.push(field);
+              field = "";
+            } else if (ch === "\n") {
+              finalize();
+            } else if (ch === "\r") {
+              // ignore — CR is handled when the LF arrives
+            } else {
+              field += ch;
+            }
+          }
+          finalize();
+          return rows;
+        }
+
+        /**
+         * 0-based column index → spreadsheet letters (0 → "A", 25 → "Z", 26 → "AA").
+         * @param {number} index
+         * @returns {string}
+         */
+        function columnToLetter(index) {
+          let n = index + 1;
+          let s = "";
+          while (n > 0) {
+            const rem = (n - 1) % 26;
+            s = String.fromCharCode(65 + rem) + s;
+            n = Math.floor((n - 1) / 26);
+          }
+          return s;
+        }
+
+        /**
+         * Makes header names unique and non-empty. Empty cells become
+         * "Column A" style names; duplicates get _2, _3 suffixes.
+         * @param {string[]} headers
+         * @returns {string[]}
+         */
+        function dedupeHeaders(headers) {
+          const seen = {};
+          return headers.map(function (h, i) {
+            const base = String(h === null || h === undefined ? "" : h).trim();
+            const key = base.length > 0 ? base : "Column " + columnToLetter(i);
+            let name = key;
+            let n = 2;
+            while (seen[name]) {
+              name = key + "_" + n;
+              n++;
+            }
+            seen[name] = true;
+            return name;
+          });
+        }
+
+        /**
+         * Normalizes raw CSV into a table shape.
+         * Trailing fully-empty rows are dropped.
+         * @param {string} csv
+         * @param {boolean} hasHeader
+         * @returns {{headers: string[] | null, dataRows: string[][], totalRows: number}}
+         *          headers is null when hasHeader is false.
+         */
+        function normalizeTable(csv, hasHeader) {
+          const parsed = csvToRows(csv);
+          const rows = [];
+          for (let i = 0; i < parsed.length; i++) {
+            const r = parsed[i];
+            const isEmpty = r.length === 0 || r.every(function (c) {
+              return String(c).trim() === "";
+            });
+            if (isEmpty && i === parsed.length - 1) continue; // drop trailing empties
+            rows.push(r);
+          }
+
+          if (!hasHeader || rows.length === 0) {
+            return { headers: null, dataRows: rows, totalRows: rows.length };
+          }
+
+          return {
+            headers: dedupeHeaders(rows[0]),
+            dataRows: rows.slice(1),
+            totalRows: rows.length,
+          };
+        }
+
+        /**
+         * Truncates a string to n chars, appending "…".
+         * @param {string} s
+         * @param {number} n
+         * @returns {string}
+         */
+        function truncate(s, n) {
+          const str = String(s === null || s === undefined ? "" : s);
+          if (str.length <= n) return str;
+          return str.slice(0, Math.max(0, n - 1)) + "…";
+        }
+
+        /**
+         * Builds cytoscape elements (nodes + edges) for a table:
+         * a root node with one node per column; each column node lists its
+         * cell values as rows, mirroring Nodex object-node styling.
+         * @param {{headers: string[] | null, dataRows: string[][], totalRows: number}} table
+         * @param {{rootLabel?: string, maxCols?: number, maxRowsShown?: number, maxValueLen?: number}} opts
+         * @returns {{nodes: object[], edges: object[]}}
+         */
+        function buildGraphElements(table, opts) {
+          const options = opts || {};
+          const rootLabel = options.rootLabel || "Table";
+          const maxCols = options.maxCols || 60;
+          const maxRowsShown = options.maxRowsShown || 100;
+          const maxValueLen = options.maxValueLen || 60;
+
+          const { headers, dataRows } = table;
+
+          let colCount = 0;
+          for (let r = 0; r < dataRows.length; r++) {
+            if (dataRows[r].length > colCount) colCount = dataRows[r].length;
+          }
+          if (headers && headers.length > colCount) colCount = headers.length;
+          colCount = Math.min(colCount, maxCols);
+
+          const nodes = [
+            {
+              data: {
+                id: "root",
+                label: rootLabel,
+                root: true,
+              },
+            },
+          ];
+          const edges = [];
+
+          for (let c = 0; c < colCount; c++) {
+            const title = headers ? headers[c] : columnToLetter(c);
+            const lines = [];
+            const shown = Math.min(dataRows.length, maxRowsShown);
+            for (let r = 0; r < shown; r++) {
+              const value = dataRows[r][c] === undefined ? "" : dataRows[r][c];
+              lines.push(r + 1 + ": " + truncate(value, maxValueLen));
+            }
+            if (dataRows.length > shown) {
+              lines.push("… +" + (dataRows.length - shown) + " more rows");
+            }
+            if (lines.length === 0) lines.push("(no data rows)");
+
+            const id = "col-" + c;
+            nodes.push({
+              data: {
+                id: id,
+                label: title + "\n" + lines.join("\n"),
+                title: title,
+                colIndex: c,
+              },
+            });
+            edges.push({
+              data: {
+                id: "edge-" + c,
+                source: "root",
+                target: id,
+                label: title,
+              },
+            });
+          }
+
+          return { nodes: nodes, edges: edges };
+        }
+
+        /**
+         * RFC 4180 serialization of a 2D array (used for re-export and testing).
+         * @param {string[][]} rows
+         * @returns {string}
+         */
+        function rowsToCsv(rows) {
+          const lines = [];
+          for (let r = 0; r < rows.length; r++) {
+            const cells = [];
+            for (let c = 0; c < rows[r].length; c++) {
+              let cell = rows[r][c];
+              if (cell === null || cell === undefined) {
+                cell = "";
+              } else {
+                cell = String(cell);
+              }
+              if (/[",\r\n]/.test(cell)) {
+                cell = '"' + cell.replace(/"/g, '""') + '"';
+              }
+              cells.push(cell);
+            }
+            lines.push(cells.join(","));
+          }
+          return lines.join("\r\n");
+        }
+
+        /**
+         * Base64URL (RFC 4648 §5) encoding of a UTF-8 string.
+         * @param {string} str
+         * @returns {string}
+         */
+        function toBase64Url(str) {
+          const bytes = new TextEncoder().encode(str);
+          let bin = "";
+          for (let i = 0; i < bytes.length; i++) {
+            bin += String.fromCharCode(bytes[i]);
+          }
+          return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        }
+
+        /**
+         * Returns a formula-safe CSV for file export: cells that start with a
+         * spreadsheet formula character (=, +, -, @) get a single-quote prefix
+         * so the file cannot execute formulas when opened in Excel/Sheets.
+         *
+         * @param {string} csv
+         * @returns {string}
+         */
+        function sanitizeCsv(csv) {
+          const rows = csvToRows(csv);
+          for (let r = 0; r < rows.length; r++) {
+            for (let c = 0; c < rows[r].length; c++) {
+              const value = String(rows[r][c]);
+              if (/^[=+\-@]/.test(value)) {
+                rows[r][c] = "'" + value;
+              }
+            }
+          }
+          return rowsToCsv(rows);
+        }
+
+        return {
+          csvToRows: csvToRows,
+          columnToLetter: columnToLetter,
+          dedupeHeaders: dedupeHeaders,
+          normalizeTable: normalizeTable,
+          truncate: truncate,
+          buildGraphElements: buildGraphElements,
+          rowsToCsv: rowsToCsv,
+          toBase64Url: toBase64Url,
+          sanitizeCsv: sanitizeCsv,
+        };
+      })();
+    </script>
+
+    <!--
+      ─────────────────────────────────────────────────────────────
+      UI GLUE — DOM, google.script.run bridge, cytoscape lifecycle.
+      ─────────────────────────────────────────────────────────────
+    -->
+    <script>
+      (function () {
+        "use strict";
+
+        var core = window.__nodexCore;
+
+        // ── Configuration ────────────────────────────────────
+        // Public URL of the deployed Nodex web app. Must be the exact origin of
+        // the deployment (postMessage is origin-validated on both sides).
+        var NODEX_APP_URL = "https://nodex-launch.vercel.app";
+
+        // Browser-level window name for the deep-link tab: if a window with this
+        // name is already open, window.open reuses it instead of opening a new
+        // tab — even across sidebar sessions.
+        var NODEX_WINDOW_NAME = "nodex-sheets-deeplink";
+
+        // Deep links use a postMessage handshake (no URL-size limits), so even
+        // very large selections can be handed to Nodex directly.
+
+        // ── Preview mode (no Apps Script) ────────────────────
+        // Detect via query (?preview=1) or hash (#preview=1). The hash variant is
+        // robust to servers that 301-strip query strings when clean URLs redirect.
+        var IS_PREVIEW =
+          /[?&]preview=1/.test(window.location.search) || /#preview=1/.test(window.location.hash);
+        var SAMPLE_CSV = [
+          "Name,Department,Salary,Remote",
+          'Ada Lovelace,"Engineering, AI",150000,true',
+          "Alan Turing,Computer Science,120000,false",
+          "Grace Hopper,Navy,130000,true",
+          "Linus Torvalds,Linux,140000,true",
+          "Margaret Hamilton,NASA,125000,false",
+        ].join("\n");
+
+        var state = {
+          csv: "",
+          sheetId: null,
+          sheetName: "",
+          rangeA1: "",
+          startRow: 1,
+          startCol: 1,
+          rowCount: 0,
+          colCount: 0,
+          hasHeader: true,
+        };
+
+        // postMessage deep-link state (see openInNodex below)
+        var targetWindow = null; // the Nodex tab we opened
+        var nodexOrigin = ""; // origin of NODEX_APP_URL, validated on inbound messages
+        var dataSent = false;
+        var acked = false;
+
+        var cy = null;
+
+        // ── Helpers ──────────────────────────────────────────
+        function $(id) {
+          return document.getElementById(id);
+        }
+
+        function showToast(message, kind) {
+          var el = $("toast");
+          el.textContent = message;
+          el.className = "toast" + (kind ? " " + kind : "");
+          clearTimeout(showToast._t);
+          showToast._t = setTimeout(function () {
+            el.className = "toast hidden";
+          }, 2600);
+        }
+
+        function setStatus(kind, message) {
+          var el = $("status");
+          if (!message) {
+            el.className = "status hidden";
+            return;
+          }
+          el.textContent = message;
+          el.className = "status " + kind;
+        }
+
+        function copyText(text, onOk) {
+          var fallback = function () {
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.appendChild(ta);
+            ta.select();
+            try {
+              document.execCommand("copy");
+              onOk();
+            } catch (e) {
+              showToast("Copy failed — select the CSV manually.", "error");
+            }
+            document.body.removeChild(ta);
+          };
+
+          if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(onOk, fallback);
+          } else {
+            fallback();
+          }
+        }
+
+        /** Server bridge: real Apps Script in production, sample data in preview. */
+        function callServer(fnName, args, onOk, onErr) {
+          if (IS_PREVIEW) {
+            setTimeout(function () {
+              if (fnName === "getSelectionAsCsv") {
+                onOk({
+                  csv: SAMPLE_CSV,
+                  sheetName: "Sales",
+                  rangeA1: "A1:D6",
+                  startRow: 1,
+                  startCol: 1,
+                  rowCount: 6,
+                  colCount: 4,
+                  error: null,
+                });
+              } else {
+                onOk(null);
+              }
+            }, 300);
+            return;
+          }
+          if (typeof google === "undefined" || !google.script) {
+            if (onErr) onErr("Apps Script runtime not available.");
+            return;
+          }
+          google.script.run.withSuccessHandler(onOk).withFailureHandler(onErr)[fnName].apply(
+            null,
+            args || []
+          );
+        }
+
+        // ── Rendering ────────────────────────────────────────
+        function escapeHtml(str) {
+          return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+        }
+
+        function renderPreviewTable(table) {
+          var body = $("previewBody");
+          body.innerHTML = "";
+          if (!table.dataRows.length && !table.headers) {
+            body.innerHTML = '<div class="status empty">No rows to preview.</div>';
+            return;
+          }
+          var colCount = 0;
+          for (var r = 0; r < table.dataRows.length; r++) {
+            if (table.dataRows[r].length > colCount) colCount = table.dataRows[r].length;
+          }
+          if (table.headers && table.headers.length > colCount) colCount = table.headers.length;
+          if (colCount === 0) colCount = 1;
+
+          var html = '<table><thead><tr>';
+          for (var c = 0; c < colCount; c++) {
+            var head = table.headers ? table.headers[c] : core.columnToLetter(c);
+            html += "<th>" + escapeHtml(head) + "</th>";
+          }
+          html += "</tr></thead><tbody>";
+
+          var MAX_PREVIEW_ROWS = 100;
+          var shown = Math.min(table.dataRows.length, MAX_PREVIEW_ROWS);
+          for (var ri = 0; ri < shown; ri++) {
+            html += "<tr>";
+            for (var ci = 0; ci < colCount; ci++) {
+              var val = table.dataRows[ri][ci];
+              html += "<td>" + escapeHtml(val === undefined ? "" : val) + "</td>";
+            }
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+          body.innerHTML = html;
+        }
+
+        function runLayout() {
+          if (!cy) return;
+          var hasElk = typeof cytoscape("layout", "elk") === "function";
+          var layout = cy.layout(
+            hasElk
+              ? {
+                  name: "elk",
+                  fit: false,
+                  elk: {
+                    algorithm: "layered",
+                    "elk.direction": "RIGHT",
+                    "elk.spacing.nodeNode": "28",
+                    "elk.layered.spacing.nodeNodeBetweenLayers": "44",
+                  },
+                }
+              : {
+                  name: "breadthfirst",
+                  directed: true,
+                  spacingFactor: 1.1,
+                  animate: false,
+                }
+          );
+          layout.run();
+          setTimeout(function () {
+            if (cy) cy.fit(undefined, 40);
+          }, 60);
+        }
+
+        function initCy(elements) {
+          cy = cytoscape({
+            container: $("cy"),
+            elements: elements,
+            boxSelectionEnabled: false,
+            autoungrabify: true,
+            autounselectify: false,
+            minZoom: 0.05,
+            maxZoom: 4,
+            wheelSensitivity: 0.3,
+            style: [
+              {
+                selector: "node",
+                style: {
+                  shape: "round-rectangle",
+                  "background-color": "#292929",
+                  "border-color": "#424242",
+                  "border-width": 1,
+                  width: "label",
+                  height: "label",
+                  padding: "8px",
+                  label: "data(label)",
+                  color: "#dcddde",
+                  "font-family": "Consolas, Menlo, monospace",
+                  "font-size": "9px",
+                  "text-wrap": "wrap",
+                  "text-max-width": "180px",
+                  "text-valign": "center",
+                  "text-halign": "center",
+                },
+              },
+              {
+                selector: "node[root]",
+                style: {
+                  "background-color": "#5865f2",
+                  "border-color": "#7c86ff",
+                  "border-width": 1.5,
+                  color: "#ffffff",
+                  "font-size": "11px",
+                  "font-weight": 700,
+                  "text-max-width": "220px",
+                },
+              },
+              {
+                selector: "node:selected",
+                style: {
+                  "border-color": "#59b8ff",
+                  "border-width": 2.5,
+                  "background-color": "#2b2c3e",
+                },
+              },
+              {
+                selector: "edge",
+                style: {
+                  width: 1.5,
+                  "line-color": "#444444",
+                  "curve-style": "bezier",
+                  "target-arrow-shape": "triangle",
+                  "target-arrow-color": "#444444",
+                  label: "data(label)",
+                  color: "#8b8e90",
+                  "font-size": "8px",
+                  "text-background-color": "#2f3136",
+                  "text-background-opacity": 1,
+                  "text-background-padding": "2px",
+                },
+              },
+            ],
+          });
+
+          cy.on("tap", "node", function (evt) {
+            var node = evt.target;
+            if (node.id() === "root") {
+              cy.nodes().unselect();
+              return;
+            }
+            cy.nodes().unselect();
+            node.select();
+            var colIndex = node.data("colIndex");
+            callServer(
+              "activateColumn",
+              [state.sheetId, state.startRow, state.startCol, colIndex, state.rowCount],
+              function () {},
+              function () {}
+            );
+          });
+        }
+
+        function renderGraph() {
+          if (!state.csv) return;
+          var table = core.normalizeTable(state.csv, state.hasHeader);
+          var elements = core.buildGraphElements(table, {
+            rootLabel: state.sheetName || "Table",
+          });
+
+          if (!cy) {
+            initCy(elements);
+          } else {
+            cy.elements().remove();
+            cy.add(elements);
+            runLayout();
+          }
+
+          $("cyWrap").classList.remove("hidden");
+          $("dims").textContent =
+            state.rowCount + "×" + state.colCount +
+            (state.sheetName && state.rangeA1 ? " · " + state.sheetName + "!" + state.rangeA1 : "");
+          $("rangeInfo").textContent = state.rangeA1
+            ? state.sheetName + "!" + state.rangeA1
+            : "";
+          renderPreviewTable(table);
+          $("preview").classList.remove("hidden");
+        }
+
+        function loadSelection() {
+          setStatus("loading", "Reading selected range…");
+          callServer(
+            "getSelectionAsCsv",
+            [],
+            function (data) {
+              if (data && data.error) {
+                state.csv = "";
+                setStatus("error", data.error);
+                $("cyWrap").classList.add("hidden");
+                $("preview").classList.add("hidden");
+                return;
+              }
+              state.csv = data.csv || "";
+              state.sheetId = data.sheetId != null ? data.sheetId : null;
+              state.sheetName = data.sheetName || "";
+              state.rangeA1 = data.rangeA1 || "";
+              state.startRow = data.startRow || 1;
+              state.startCol = data.startCol || 1;
+              state.rowCount = data.rowCount || 0;
+              state.colCount = data.colCount || 0;
+              setStatus(null);
+              renderGraph();
+            },
+            function (err) {
+              setStatus("error", String((err && err.message) || err || "Failed to read selection."));
+            }
+          );
+        }
+
+        // ── Actions ──────────────────────────────────────────
+        /**
+         * Sends the current selection to the Nodex tab via postMessage.
+         * Safe to call more than once; the first send wins.
+         */
+        function sendToNodex() {
+          if (!state.csv || !targetWindow || targetWindow.closed || dataSent) return;
+          dataSent = true;
+          targetWindow.postMessage(
+            {
+              type: "nodex-sheets",
+              source: "nodex-sheets-addon",
+              csv: state.csv,
+            },
+            nodexOrigin
+          );
+          showToast("Sending data to Nodex\u2026");
+        }
+
+        /**
+         * Opens the Nodex web app in a new tab and hands it the selection over
+         * postMessage (no URL-size limits). Falls back to copying the CSV if
+         * the app never confirms receipt or the popup is blocked.
+         */
+        function openInNodex() {
+          if (!state.csv) return;
+
+          if (!NODEX_APP_URL) {
+            showToast(
+              "Set NODEX_APP_URL in Sidebar.html to open Nodex \u2014 CSV copied instead.",
+              "error"
+            );
+            copyText(state.csv, function () {
+              showToast("CSV copied to clipboard.", "ok");
+            });
+            return;
+          }
+
+          try {
+            nodexOrigin = new URL(NODEX_APP_URL).origin;
+          } catch (e) {
+            showToast("NODEX_APP_URL is not a valid URL \u2014 CSV copied instead.", "error");
+            copyText(state.csv, function () {
+              showToast("CSV copied to clipboard.", "ok");
+            });
+            return;
+          }
+          // Reuse an already-open Nodex tab when possible. First check the tab
+          // this sidebar opened — if it's still alive, just focus it and hand
+          // over the data (no reload). Otherwise open a named window, which the
+          // browser reuses across sidebar sessions.
+          if (targetWindow && !targetWindow.closed) {
+            targetWindow.focus();
+          } else {
+            targetWindow = window.open(NODEX_APP_URL, NODEX_WINDOW_NAME);
+            if (!targetWindow) {
+              showToast("Popup blocked \u2014 CSV copied instead.", "error");
+              copyText(state.csv, function () {
+                showToast("CSV copied to clipboard.", "ok");
+              });
+              return;
+            }
+          }
+
+          dataSent = false;
+          acked = false;
+
+          // Try immediately (in case the app already has a listener), and also
+          // ping the handshake — the app replies "ready" once it is listening,
+          // which triggers sendToNodex() again (guarded against double-send).
+          sendToNodex();
+          targetWindow.postMessage(
+            { type: "nodex-sheets", status: "ping" },
+            nodexOrigin
+          );
+
+          // If the app never confirms receipt, don't lose the data.
+          clearTimeout(openInNodex._t);
+          openInNodex._t = setTimeout(function () {
+            if (!acked) {
+              showToast("Nodex didn't confirm \u2014 CSV copied to clipboard.", "error");
+              copyText(state.csv, function () {
+                showToast("CSV copied to clipboard.", "ok");
+              });
+            }
+          }, 12000);
+        }
+
+        function downloadCsv() {
+          if (!state.csv) return;
+          var base = (state.sheetName || "nodex").replace(/[^\w-]+/g, "_");
+          var blob = new Blob(["\uFEFF" + core.sanitizeCsv(state.csv)], {
+            type: "text/csv;charset=utf-8",
+          });
+          var a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = base + ".csv";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(a.href);
+        }
+
+        // ── Wiring ───────────────────────────────────────────
+        $("refreshBtn").addEventListener("click", loadSelection);
+        $("hasHeader").addEventListener("change", function () {
+          state.hasHeader = this.checked;
+          if (state.csv) renderGraph();
+        });
+        $("openNodexBtn").addEventListener("click", openInNodex);
+        $("copyCsvBtn").addEventListener("click", function () {
+          if (!state.csv) return;
+          copyText(state.csv, function () {
+            showToast("CSV copied to clipboard.", "ok");
+          });
+        });
+        $("downloadCsvBtn").addEventListener("click", downloadCsv);
+        $("fitBtn").addEventListener("click", function () {
+          if (cy) cy.fit(undefined, 40);
+        });
+        $("zoomInBtn").addEventListener("click", function () {
+          if (cy) cy.zoom(cy.zoom() * 1.25);
+        });
+        $("zoomOutBtn").addEventListener("click", function () {
+          if (cy) cy.zoom(cy.zoom() * 0.8);
+        });
+
+        // ── postMessage deep-link handshake ─────────────────
+        // The Nodex app replies to our messages; only trust the configured origin.
+        window.addEventListener("message", function (event) {
+          var data = event.data;
+          if (!data || typeof data !== "object" || data.type !== "nodex-sheets") return;
+          if (event.origin !== nodexOrigin) return;
+
+          if (data.status === "ready" && targetWindow && !targetWindow.closed) {
+            sendToNodex();
+          } else if (data.status === "loaded") {
+            acked = true;
+            clearTimeout(openInNodex._t);
+            showToast("Data loaded in Nodex.", "ok");
+          }
+        });
+
+        // ── Boot ─────────────────────────────────────────────
+        if (!IS_PREVIEW && typeof google === "undefined") {
+          setStatus(
+            "error",
+            "This file must be opened through Google Sheets (Nodex menu), or with ?preview=1 for a demo."
+          );
+          return;
+        }
+        loadSelection();
+      })();
+    </script>
+  </body>
+</html>

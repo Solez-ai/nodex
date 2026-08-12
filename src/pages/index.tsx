@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/router";
 import { useMantineColorScheme } from "@mantine/core";
 import "@mantine/dropzone/styles.css";
 import styled, { ThemeProvider } from "styled-components";
@@ -13,6 +14,7 @@ import { BottomBar } from "../features/editor/BottomBar";
 import { DiffSummaryBanner } from "../features/editor/DiffSummaryBanner";
 import { Toolbar } from "../features/editor/Toolbar";
 import useGraph from "../features/editor/views/GraphView/stores/useGraph";
+import useSheetsImport from "../hooks/useSheetsImport";
 import useConfig from "../store/useConfig";
 import useFile from "../store/useFile";
 
@@ -96,12 +98,16 @@ const NodexApp = () => {
   const darkmodeEnabled = useConfig(state => state.darkmodeEnabled);
   const fullscreen = useGraph(state => state.fullscreen);
   const checkEditorSession = useFile(state => state.checkEditorSession);
+  const router = useRouter();
+
+  // Import CSV handed over by the Google Sheets add-on sidebar (postMessage)
+  useSheetsImport();
 
   useEffect(() => {
     setColorScheme(darkmodeEnabled ? "dark" : "light");
-    // Initialize with example data
-    checkEditorSession(undefined);
-  }, [darkmodeEnabled, setColorScheme, checkEditorSession]);
+    // Initialize with example data, a session restore, or a ?csv= / ?url= import
+    checkEditorSession(router.query);
+  }, [darkmodeEnabled, setColorScheme, checkEditorSession, router.query]);
 
   return (
     <>

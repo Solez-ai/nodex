@@ -1,0 +1,20 @@
+# Normalize line endings for all text files.
+# Text files are stored as LF in the repository; on checkout they use the
+# platform's native endings (CRLF on Windows, LF elsewhere). This pairs with
+# Prettier's "endOfLine": "auto" so `npm run lint` passes on any platform.
+* text=auto
+
+# Binary assets — never normalize or convert these.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.eot  binary
+*.wasm binary
+*.pdf  binary
+*.zip  binary

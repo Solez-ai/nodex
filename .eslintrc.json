@@ -10,7 +10,6 @@
     "no-multiple-empty-lines": "error",
     "no-irregular-whitespace": "error",
     "strict": ["error", "never"],
-    "linebreak-style": ["error", "unix"],
     "quotes": ["error", "double", { "avoidEscape": true }],
     "semi": ["error", "always"],
     "prefer-const": "error",
