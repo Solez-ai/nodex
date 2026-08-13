@@ -162,6 +162,12 @@
         border-color: #6b75f4;
       }
 
+      /* The pop-out escape hatch (Google Sheets pins the sidebar at ~300px) */
+      .btn.pop {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
       /* ── Status ─────────────────────────────────────────── */
       .status {
         padding: 10px 12px;
@@ -414,6 +420,141 @@
         display: none !important;
       }
 
+      /* ── Inspector: connections tree / edge explanation ── */
+      .inspector {
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-elev);
+        border-top: 1px solid var(--border);
+        max-height: 46%;
+        overflow: hidden;
+      }
+
+      .inspector.hidden {
+        display: none;
+      }
+
+      .inspector-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 6px 10px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+
+      .inspector-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--accent);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .inspector-body {
+        overflow: auto;
+        padding: 8px 10px 10px;
+        font-size: 12px;
+      }
+
+      .conn-group {
+        margin-bottom: 8px;
+      }
+
+      .conn-head {
+        font-family: Consolas, Menlo, monospace;
+        color: var(--text);
+        margin-bottom: 2px;
+      }
+
+      .conn-key {
+        color: #59b8ff;
+      }
+
+      .conn-value {
+        color: #e8c479;
+      }
+
+      .conn-row {
+        display: block;
+        width: 100%;
+        text-align: left;
+        background: none;
+        border: none;
+        color: var(--text);
+        padding: 1px 0 1px 6px;
+        font-size: 12px;
+        cursor: pointer;
+        border-radius: 3px;
+      }
+
+      .conn-row:hover {
+        background: #3a3d44;
+        color: var(--accent);
+      }
+
+      .conn-note {
+        color: var(--muted);
+        font-size: 11px;
+        padding-left: 6px;
+      }
+
+      .inspector-note {
+        color: var(--muted);
+      }
+
+      .inspector-tip {
+        color: var(--muted);
+        font-size: 11px;
+        margin-top: 6px;
+        border-top: 1px solid var(--border);
+        padding-top: 6px;
+      }
+
+      .inspector-line {
+        font-family: Consolas, Menlo, monospace;
+        padding: 1px 0;
+        color: var(--text);
+        white-space: pre-wrap;
+      }
+
+      .inspector-title-line {
+        color: var(--accent);
+        font-weight: 700;
+        margin-bottom: 4px;
+      }
+
+      .inspector-therefore {
+        font-family: Consolas, Menlo, monospace;
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px solid var(--border);
+        color: var(--ok);
+      }
+
+      /* ── Edge hover tooltip ("why is this connected?" preview) ── */
+      .edge-tip {
+        position: absolute;
+        z-index: 20;
+        max-width: 260px;
+        background: #202225;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 8px;
+        font-size: 11px;
+        font-family: Consolas, Menlo, monospace;
+        color: var(--text);
+        pointer-events: none;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      }
+
+      .edge-tip.hidden {
+        display: none;
+      }
+
       /* ── Standalone pop-out window ─────────────────────── */
       /* In the large standalone window the deep-link actions make no sense. */
       body.standalone #popOutBtn,
@@ -459,7 +600,16 @@
           <button id="zoomInBtn" class="btn" title="Zoom in">+</button>
           <button id="zoomOutBtn" class="btn" title="Zoom out">−</button>
         </div>
-        <div class="cy-hint">Click a row node to select that row in the sheet · scroll to zoom · drag to pan</div>
+        <div id="edgeTip" class="edge-tip hidden"></div>
+        <div class="cy-hint">Click a node to trace its connections · click an edge for the reason · scroll to zoom · drag to pan</div>
+      </div>
+
+      <div id="inspector" class="inspector hidden">
+        <div class="inspector-head">
+          <span id="inspectorTitle" class="inspector-title"></span>
+          <button id="inspectorClose" class="btn" title="Clear focus">✕</button>
+        </div>
+        <div id="inspectorBody" class="inspector-body"></div>
       </div>
 
       <details id="preview" class="preview hidden">
@@ -474,8 +624,8 @@
         <span id="dims" class="dims"></span>
         <button
           id="popOutBtn"
-          class="btn"
-          title="Open the visualization in a large, freely resizable window"
+          class="btn pop"
+          title="Open the visualization in a large, freely resizable window (Google Sheets pins this sidebar at ~300px)"
         >
           ⇱ Pop out
         </button>
@@ -822,12 +972,128 @@
         }
 
         /**
+         * Human-readable label for a data row: the first non-empty cell,
+         * truncated (so explanations read "Arafat Rahman", not "row 4").
+         * @param {{headers: string[] | null, dataRows: string[][]}} table
+         * @param {number} rowIndex
+         * @returns {string}
+         */
+        function rowName(table, rowIndex) {
+          var row = table.dataRows[rowIndex];
+          if (row) {
+            for (var c = 0; c < row.length; c++) {
+              var v = String(row[c] === undefined || row[c] === null ? "" : row[c]).trim();
+              if (v !== "") return truncate(v, 30);
+            }
+          }
+          return "row " + (rowIndex + 1);
+        }
+
+        /**
+         * Discovers "connector" values: cells whose trimmed value appears in
+         * 2+ rows of the same column. Those rows are related through that
+         * column:value pair (e.g. a shared "club" value links every student
+         * in the club). Values shared by every row are not discriminating and
+         * are skipped. Results are capped and sorted so the most specific
+         * (smallest) groups come first.
+         *
+         * @param {{headers: string[] | null, dataRows: string[][]}} table
+         * @param {{maxHubs?: number, maxHubMembers?: number}} opts
+         * @returns {{colIndex: number, colKey: string, value: string, rows: number[]}[]}
+         */
+        function findConnectors(table, opts) {
+          var options = opts || {};
+          var maxHubs = options.maxHubs || 25;
+          var maxHubMembers = options.maxHubMembers || 50;
+          var headers = table.headers;
+          var dataRows = table.dataRows;
+          if (!dataRows || dataRows.length < 2) return [];
+
+          var colCount = 0;
+          for (var r = 0; r < dataRows.length; r++) {
+            if (dataRows[r].length > colCount) colCount = dataRows[r].length;
+          }
+          if (headers && headers.length > colCount) colCount = headers.length;
+          if (colCount === 0) return [];
+
+          // value (lowercased) → { value, rows: [rowIndex...] } per column
+          var byCol = [];
+          for (var c = 0; c < colCount; c++) byCol.push({});
+          for (var i = 0; i < dataRows.length; i++) {
+            for (var ci = 0; ci < colCount; ci++) {
+              var raw = dataRows[i][ci];
+              var v = String(raw === undefined || raw === null ? "" : raw).trim();
+              if (v === "") continue;
+              var key = v.toLowerCase();
+              if (!byCol[ci][key]) byCol[ci][key] = { value: v, rows: [] };
+              byCol[ci][key].rows.push(i);
+            }
+          }
+
+          var connectors = [];
+          for (var cj = 0; cj < colCount; cj++) {
+            var colKey = headers ? headers[cj] : columnToLetter(cj);
+            var vals = byCol[cj];
+            for (var k in vals) {
+              if (!Object.prototype.hasOwnProperty.call(vals, k)) continue;
+              var group = vals[k];
+              var n = group.rows.length;
+              if (n < 2 || n > maxHubMembers) continue;
+              if (n >= dataRows.length) continue; // constant column — not informative
+              if (valueType(group.value) === "boolean") continue; // true/false flags are not entities
+              connectors.push({
+                colIndex: cj,
+                colKey: colKey,
+                value: group.value,
+                rows: group.rows,
+              });
+            }
+          }
+
+          connectors.sort(function (a, b) {
+            return a.rows.length - b.rows.length;
+          });
+          return connectors.slice(0, maxHubs);
+        }
+
+        /**
+         * Hub (connector-value) node SVG: the shared value on top with the
+         * column name below in accent blue — marks a value that links rows.
+         * @param {string} value
+         * @param {string} colKey
+         * @param {number} width
+         * @param {number} height
+         * @returns {string}
+         */
+        function nodeSvgHub(value, colKey, width, height) {
+          var body =
+            '<text x="' +
+            width / 2 +
+            '" y="' +
+            (height / 2 - 7) +
+            '" text-anchor="middle" dominant-baseline="central" fill="#dce5e7">' +
+            escapeXml(value) +
+            "</text>" +
+            '<text x="' +
+            width / 2 +
+            '" y="' +
+            (height / 2 + 12) +
+            '" text-anchor="middle" dominant-baseline="central" font-size="10" fill="#59b8ff">' +
+            escapeXml(colKey) +
+            "</text>";
+          return svgWrap(body, width, height);
+        }
+
+        /**
          * Builds cytoscape elements mirroring the Nodex web app's rendering of
          * the same CSV: a root "[N items]" array node with one object node per
          * data row, each showing "key: value" rows colored by value type.
+         * Rows that share a column value get linked through "hub" nodes (see
+         * findConnectors) so the graph exposes real relationships, not just a
+         * star from the root.
          *
          * @param {{headers: string[] | null, dataRows: string[][], totalRows: number}} table
-         * @param {{maxCols?: number, maxRowsShown?: number, maxValueLen?: number}} opts
+         * @param {{maxCols?: number, maxRowsShown?: number, maxValueLen?: number, maxHubs?: number, maxHubMembers?: number}} opts
          * @returns {{nodes: object[], edges: object[]}} node data carries the raw
          *          SVG markup (svg) plus its pixel size (width, height)
          */
@@ -899,6 +1165,77 @@
             edges.push({ data: { id: "edge-" + i, source: "root", target: id } });
           }
 
+          // ── Connector hubs (the "smart engine") ───────────────────────
+          // Values shared by 2+ rows of the same column become hub nodes that
+          // link those rows together (e.g. "Robotics Club" links every student
+          // with club = Robotics Club). Capped so the graph stays readable;
+          // computed over the shown rows only, so hubs only reference rendered
+          // row nodes.
+          var maxHubs = options.maxHubs || 25;
+          var maxHubMembers = options.maxHubMembers || 50;
+          var conns = findConnectors(
+            {
+              headers: headers ? headers.slice(0, colCount) : null,
+              dataRows: dataRows.slice(0, shown).map(function (r) {
+                return r.slice(0, colCount);
+              }),
+            },
+            { maxHubs: maxHubs, maxHubMembers: maxHubMembers }
+          );
+
+          var rowConns = [];
+          for (var rci = 0; rci < shown; rci++) rowConns.push([]);
+
+          for (var hi = 0; hi < conns.length; hi++) {
+            var conn = conns[hi];
+            var hubId = "hub-" + hi;
+            var hubW =
+              Math.max(estimateTextWidth(conn.value, 12), estimateTextWidth(conn.colKey, 10)) + 28;
+            var hubH = 46;
+            nodes.push({
+              data: {
+                id: hubId,
+                kind: "hub",
+                colIndex: conn.colIndex,
+                colKey: conn.colKey,
+                value: conn.value,
+                rows: conn.rows,
+                width: hubW,
+                height: hubH,
+                svg: nodeSvgHub(conn.value, conn.colKey, hubW, hubH),
+              },
+            });
+            for (var m = 0; m < conn.rows.length; m++) {
+              var rIdx = conn.rows[m];
+              var edgeId = "he-" + hubId + "-" + rIdx;
+              edges.push({
+                data: {
+                  id: edgeId,
+                  source: hubId,
+                  target: "row-" + rIdx,
+                  hubId: hubId,
+                  rowIndex: rIdx,
+                  colKey: conn.colKey,
+                  value: conn.value,
+                },
+              });
+              rowConns[rIdx].push({
+                hubId: hubId,
+                colKey: conn.colKey,
+                value: conn.value,
+                rows: conn.rows,
+              });
+            }
+          }
+
+          // Attach each row's connectors to its node data (drives trace +
+          // the connections panel). Row nodes start at index 1 after the root.
+          for (var rj = 0; rj < shown; rj++) {
+            if (rowConns[rj].length > 0) {
+              nodes[rj + 1].data.conns = rowConns[rj];
+            }
+          }
+
           // Overflow marker when the row cap hides data (muted metadata style).
           if (dataRows.length > shown) {
             var more = "… +" + (dataRows.length - shown) + " more rows";
@@ -918,6 +1255,58 @@
           }
 
           return { nodes: nodes, edges: edges };
+        }
+
+        /**
+         * The "Therefore: …" sentence for a connection, phrased from the
+         * column name so it reads naturally (club → "is a member of",
+         * class → "is in", …). Falls back to a generic "shares" phrasing.
+         * @param {string} colKey - column name (e.g. "club")
+         * @param {string} nameA - first row label
+         * @param {string | null} nameB - second row label, or null when the
+         *   match is against a value hub (single-student phrasing)
+         * @param {string} value - the shared value
+         * @returns {string}
+         */
+        function thereforeSentence(colKey, nameA, nameB, value) {
+          var k = String(colKey || "").toLowerCase();
+          if (nameB === null || nameB === undefined) {
+            if (/club|member|team|committee|society/.test(k)) return nameA + " is a member of " + value + ".";
+            if (/class|section|grade|batch|group/.test(k)) return nameA + " is in " + value + ".";
+            if (/teacher|mentor|advisor|coach/.test(k)) return nameA + " is taught by " + value + ".";
+            if (/school|college|university|institute|academy/.test(k)) return nameA + " attends " + value + ".";
+            if (/department|division|org|organization|company|firm/.test(k)) return nameA + " works in " + value + ".";
+            if (/city|town|country|address|location|district/.test(k)) return nameA + " is in " + value + ".";
+            return nameA + " matches on " + value + ".";
+          }
+          if (/club|member|team|committee|society/.test(k)) return nameA + " and " + nameB + " are both members of " + value + ".";
+          if (/class|section|grade|batch|group/.test(k)) return nameA + " and " + nameB + " are both in " + value + ".";
+          if (/teacher|mentor|advisor|coach/.test(k)) return nameA + " and " + nameB + " share the same teacher, " + value + ".";
+          if (/school|college|university|institute|academy/.test(k)) return nameA + " and " + nameB + " both attend " + value + ".";
+          if (/department|division|org|organization|company|firm/.test(k)) return nameA + " and " + nameB + " both work in " + value + ".";
+          if (/city|town|country|address|location|district/.test(k)) return nameA + " and " + nameB + " are both in " + value + ".";
+          return nameA + " and " + nameB + " share the value " + value + ".";
+        }
+
+        /**
+         * Builds the full "Relationship detected" explanation for a row ↔ value
+         * edge, mirroring the template: Source / col = value / Match found in /
+         * col = value / Therefore: …
+         * @param {string} sourceName - row label (e.g. "Arafat Rahman")
+         * @param {string} colKey - column name (e.g. "club")
+         * @param {string} value - shared value (e.g. "Robotics Club")
+         * @param {number} memberCount - how many rows share the value
+         * @returns {string} multi-line explanation
+         */
+        function explainConnection(sourceName, colKey, value, memberCount) {
+          return (
+            "Relationship detected\n" +
+            "Source: " + sourceName + "\n" +
+            colKey + ' = "' + value + '"\n' +
+            "Match found in: " + value + ' (column "' + colKey + '", ' + memberCount + " rows)\n" +
+            colKey + ' = "' + value + '"\n' +
+            "Therefore: " + thereforeSentence(colKey, sourceName, null, value)
+          );
         }
 
         /**
@@ -995,6 +1384,11 @@
           svgWrap: svgWrap,
           nodeSvgSingle: nodeSvgSingle,
           nodeSvgObject: nodeSvgObject,
+          nodeSvgHub: nodeSvgHub,
+          rowName: rowName,
+          findConnectors: findConnectors,
+          thereforeSentence: thereforeSentence,
+          explainConnection: explainConnection,
           buildGraphElements: buildGraphElements,
           rowsToCsv: rowsToCsv,
           toBase64Url: toBase64Url,
@@ -1083,6 +1477,11 @@
         var userToggledExpand = false;
 
         var cy = null;
+
+        // Smart-engine state: last normalized table (for row labels) and the
+        // currently focused/traced element, if any.
+        var currentTable = null;
+        var focusState = null; // { kind: "row" | "hub" | "edge", id }
 
         // ── Helpers ──────────────────────────────────────────
         function $(id) {
@@ -1298,20 +1697,67 @@
                   "curve-style": "straight",
                 },
               },
+              // Trace highlight: everything outside the focused set fades,
+              // the focused set gets the app's blue ring / accent edges.
+              {
+                selector: ".dimmed",
+                style: {
+                  opacity: 0.12,
+                  "border-color": "transparent",
+                },
+              },
+              {
+                selector: "edge.dimmed",
+                style: {
+                  opacity: 0.12,
+                },
+              },
+              {
+                selector: ".focused",
+                style: {
+                  "border-color": "#3B82F6",
+                  "border-width": 2,
+                },
+              },
+              {
+                selector: "edge.focused",
+                style: {
+                  "line-color": "#59b8ff",
+                  width: 2.5,
+                },
+              },
             ],
           });
 
           cy.on("tap", "node", function (evt) {
             var node = evt.target;
             cy.nodes().unselect();
-            if (node.data("kind") !== "row") return;
-            node.select();
-            callServer(
-              "activateRow",
-              [state.sheetId, state.startRow + node.data("rowIndex"), state.startCol, state.colCount],
-              function () {},
-              function () {}
-            );
+            var kind = node.data("kind");
+            if (kind === "row") {
+              // Keep selecting the row in the sheet, and now also trace it:
+              // highlight the node, its shared values, and every row connected
+              // through them; everything else fades (see focusNode).
+              node.select();
+              callServer(
+                "activateRow",
+                [state.sheetId, state.startRow + node.data("rowIndex"), state.startCol, state.colCount],
+                function () {},
+                function () {}
+              );
+              focusNode(node, "row");
+            } else if (kind === "hub") {
+              focusNode(node, "hub");
+            } else {
+              clearFocus(); // root / overflow marker → back to the full view
+            }
+          });
+
+          cy.on("tap", "edge", function (evt) {
+            focusEdge(evt.target);
+          });
+
+          cy.on("tap", function (evt) {
+            if (evt.target === cy) clearFocus(); // tapped the background
           });
 
           cy.on("mouseover", "node", function (evt) {
@@ -1322,11 +1768,29 @@
               evt.target.style("border-color", "transparent");
             }
           });
+
+          // Edge hover shows a "why is this connected?" tooltip preview.
+          cy.on("mouseover", "edge", function (evt) {
+            var d = evt.target.data();
+            if (!d.colKey) return; // plain root edges have no story
+            $("edgeTip").textContent = core
+              .explainConnection(rowLabel(d.rowIndex), d.colKey, d.value, hubRows(d.hubId).length)
+              .replace(/\n/g, " ");
+            $("edgeTip").classList.remove("hidden");
+            positionEdgeTip(evt);
+          });
+          cy.on("mousemove", "edge", function (evt) {
+            if (!$("edgeTip").classList.contains("hidden")) positionEdgeTip(evt);
+          });
+          cy.on("mouseout", "edge", function () {
+            $("edgeTip").classList.add("hidden");
+          });
         }
 
         function renderGraph(precomputedTable) {
           if (!state.csv) return;
           var table = precomputedTable || core.normalizeTable(state.csv, state.hasHeader);
+          currentTable = table;
           var elements = core.buildGraphElements(table, { maxRowsShown: MAX_GRAPH_ROWS });
           elements.nodes.forEach(function (n) {
             n.data.svg = svgDataUri(n.data.svg);
@@ -1346,6 +1810,9 @@
           // created, so cytoscape's recorded size may still be 0×0.
           cy.resize();
           runLayout();
+          // Fresh elements carry no highlight classes — reset any focus state.
+          focusState = null;
+          hideInspector();
           var dimsText =
             state.rowCount + "×" + state.colCount +
             (state.sheetName && state.rangeA1 ? " · " + state.sheetName + "!" + state.rangeA1 : "");
@@ -1353,7 +1820,10 @@
             return n.data.kind === "overflow";
           });
           if (hasOverflow) {
-            dimsText += " · showing first " + (elements.nodes.length - 2) + " rows";
+            var rowShown = elements.nodes.filter(function (n) {
+              return n.data.kind === "row";
+            }).length;
+            dimsText += " · showing first " + rowShown + " rows";
           }
           $("dims").textContent = dimsText;
           $("rangeInfo").textContent = state.rangeA1
@@ -1488,6 +1958,202 @@
               setStatus("error", String((err && err.message) || err || "Failed to read selection."));
             }
           );
+        }
+
+        // ── Smart engine: trace, connections, why-panel ──────
+        function rowLabel(rowIndex) {
+          return currentTable ? core.rowName(currentTable, rowIndex) : "row " + (rowIndex + 1);
+        }
+
+        function rowNodeId(rowIndex) {
+          return "row-" + rowIndex;
+        }
+
+        function hubRows(hubId) {
+          var hub = cy.getElementById(hubId);
+          return hub.length > 0 ? hub.data("rows") || [] : [];
+        }
+
+        /**
+         * Highlights a set of elements and dims everything else ("trace").
+         * @param {string[]} ids
+         */
+        function focusElements(ids) {
+          var set = cy.$(ids.map(function (id) {
+            return "#" + id;
+          }).join(", "));
+          cy.elements().removeClass("dimmed").removeClass("focused");
+          cy.elements().not(set).addClass("dimmed");
+          set.removeClass("dimmed").addClass("focused");
+          cy.fit(set, 60);
+        }
+
+        /**
+         * Traces a node: highlights it plus everything connected through shared
+         * values, fades the rest, and opens the connections panel.
+         */
+        function focusNode(node, kind) {
+          var ids = [];
+          if (kind === "row") {
+            ids.push(node.id());
+            var conns = node.data("conns") || [];
+            conns.forEach(function (conn) {
+              ids.push(conn.hubId);
+              (conn.rows || []).forEach(function (ri) {
+                ids.push(rowNodeId(ri));
+                ids.push("he-" + conn.hubId + "-" + ri);
+              });
+            });
+            focusElements(ids);
+            focusState = { kind: "row", id: node.id() };
+            showInspector(
+              "Connections — " + rowLabel(node.data("rowIndex")),
+              rowConnectionsHtml(node)
+            );
+          } else if (kind === "hub") {
+            var hub = node.data();
+            ids.push(node.id());
+            (hub.rows || []).forEach(function (ri) {
+              ids.push(rowNodeId(ri));
+              ids.push("he-" + node.id() + "-" + ri);
+            });
+            focusElements(ids);
+            focusState = { kind: "hub", id: node.id() };
+            showInspector("Connections — " + hub.value, hubConnectionsHtml(node));
+          }
+        }
+
+        /** Highlights an edge and its endpoints, and explains why it exists. */
+        function focusEdge(edge) {
+          var d = edge.data();
+          if (!d.colKey) return; // plain root edges have no story
+          focusElements([edge.id(), edge.source().id(), edge.target().id()]);
+          focusState = { kind: "edge", id: edge.id() };
+          showInspector("Why is this connected?", edgeExplanationHtml(edge));
+        }
+
+        /** Clears the trace highlight and closes the inspector. */
+        function clearFocus() {
+          focusState = null;
+          if (cy) {
+            cy.elements().removeClass("dimmed").removeClass("focused");
+            cy.fit(undefined, 40);
+          }
+          hideInspector();
+        }
+
+        function showInspector(title, bodyHtml) {
+          $("inspectorTitle").textContent = title;
+          $("inspectorBody").innerHTML = bodyHtml;
+          $("inspector").classList.remove("hidden");
+          setTimeout(function () {
+            if (cy) cy.resize();
+          }, 60);
+        }
+
+        function hideInspector() {
+          $("inspector").classList.add("hidden");
+          setTimeout(function () {
+            if (cy) cy.resize();
+          }, 60);
+        }
+
+        /** The "Find connections" tree for a row: column = value → linked rows. */
+        function rowConnectionsHtml(node) {
+          var conns = node.data("conns") || [];
+          if (conns.length === 0) {
+            return (
+              '<div class="inspector-note">No shared values — this row has no ' +
+              "connections to other rows in the table.</div>"
+            );
+          }
+          var html = "";
+          conns.forEach(function (conn) {
+            var members = (conn.rows || []).filter(function (ri) {
+              return ri !== node.data("rowIndex");
+            });
+            html += '<div class="conn-group">';
+            html +=
+              '<div class="conn-head"><span class="conn-key">' +
+              escapeHtml(conn.colKey) +
+              '</span> = "<span class="conn-value">' +
+              escapeHtml(conn.value) +
+              '"</span></div>';
+            if (members.length === 0) {
+              html += '<div class="conn-note">(only row)</div>';
+            } else {
+              var MAX_LISTED = 8;
+              var shown = members.slice(0, MAX_LISTED);
+              for (var i = 0; i < shown.length; i++) {
+                html +=
+                  '<button class="conn-row" data-row="' +
+                  shown[i] +
+                  '">\u2022 ' +
+                  escapeHtml(rowLabel(shown[i])) +
+                  "</button>";
+              }
+              if (members.length > shown.length) {
+                html +=
+                  '<div class="conn-note">+ ' + (members.length - shown.length) + " more</div>";
+              }
+            }
+            html += "</div>";
+          });
+          html +=
+            '<div class="inspector-tip">Tip: click an edge to see the reason, or ✕ to clear.</div>';
+          return html;
+        }
+
+        /** The member list for a hub (a shared value like "Robotics Club"). */
+        function hubConnectionsHtml(node) {
+          var hub = node.data();
+          var members = hub.rows || [];
+          var html =
+            '<div class="conn-head"><span class="conn-key">' +
+            escapeHtml(hub.colKey) +
+            "</span> · " +
+            members.length +
+            ' rows share <span class="conn-value">' +
+            escapeHtml(hub.value) +
+            "</span></div>";
+          for (var i = 0; i < members.length; i++) {
+            html +=
+              '<button class="conn-row" data-row="' +
+              members[i] +
+              '">\u2022 ' +
+              escapeHtml(rowLabel(members[i])) +
+              "</button>";
+          }
+          return html + '<div class="inspector-tip">Tip: click an edge to see the reason.</div>';
+        }
+
+        /** The "Relationship detected" explanation for an edge. */
+        function edgeExplanationHtml(edge) {
+          var d = edge.data();
+          var text = core.explainConnection(
+            rowLabel(d.rowIndex),
+            d.colKey,
+            d.value,
+            hubRows(d.hubId).length
+          );
+          var lines = text.split("\n");
+          var html = "";
+          for (var i = 0; i < lines.length; i++) {
+            var cls = "inspector-line";
+            if (i === lines.length - 1) cls = "inspector-therefore";
+            else if (lines[i] === "Relationship detected") cls = "inspector-title-line";
+            html += '<div class="' + cls + '">' + escapeHtml(lines[i]) + "</div>";
+          }
+          return html;
+        }
+
+        /** Positions the edge hover tooltip near the cursor (within the canvas). */
+        function positionEdgeTip(evt) {
+          var w = $("cyWrap").clientWidth;
+          var x = evt.renderedPosition.x + 14;
+          if (x + 240 > w) x = Math.max(4, x - 250);
+          $("edgeTip").style.left = x + "px";
+          $("edgeTip").style.top = evt.renderedPosition.y + 14 + "px";
         }
 
         // ── Actions ──────────────────────────────────────────
@@ -1722,6 +2388,16 @@
           setExpanded(!app.classList.contains("expanded"));
         });
 
+        // Inspector: ✕ clears the trace; clicking a listed row traces it.
+        $("inspectorClose").addEventListener("click", clearFocus);
+        $("inspectorBody").addEventListener("click", function (evt) {
+          var btn = evt.target && evt.target.closest ? evt.target.closest(".conn-row") : null;
+          if (!btn) return;
+          var ri = parseInt(btn.getAttribute("data-row"), 10);
+          var row = cy.getElementById(rowNodeId(ri));
+          if (row.length > 0) focusNode(row, "row");
+        });
+
         // Opening/closing the preview changes the graph area — cytoscape only
         // auto-resizes on window resize, so tell it explicitly.
         document.querySelector("#preview summary").addEventListener("click", function () {
@@ -1804,6 +2480,33 @@
                 y: Math.round(n.position("y")),
               };
             });
+          },
+          tapNode: function (id) {
+            var el = cy.getElementById(id);
+            if (el.length > 0) el.trigger("tap");
+          },
+          tapEdge: function (id) {
+            var el = cy.getElementById(id);
+            if (el.length > 0) el.trigger("tap");
+          },
+          backgroundTap: function () {
+            cy.trigger("tap");
+          },
+          clearFocus: clearFocus,
+          focusInfo: function () {
+            return {
+              state: focusState,
+              dimmed: cy ? cy.elements(".dimmed").length : 0,
+              dimmedNodes: cy ? cy.elements("node.dimmed").length : 0,
+              dimmedEdges: cy ? cy.elements("edge.dimmed").length : 0,
+              focused: cy ? cy.elements(".focused").length : 0,
+              inspectorVisible: !$("inspector").classList.contains("hidden"),
+              inspectorTitle: $("inspectorTitle").textContent,
+              inspectorBody: $("inspectorBody").textContent,
+            };
+          },
+          rowLabel: function (ri) {
+            return rowLabel(ri);
           },
         };
 

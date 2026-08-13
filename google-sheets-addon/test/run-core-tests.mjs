@@ -207,6 +207,149 @@ const wide = core.buildGraphElements(core.normalizeTable("a,b,c,d\n1,2,3,4", tru
 assert(wide.nodes[1].data.svg.includes("a: "), true, "maxCols keeps first columns");
 assert(wide.nodes[1].data.svg.includes("d: "), false, "maxCols drops later columns");
 
+// ── findConnectors (smart engine) ──────────────────────────────────────────
+const roster = core.normalizeTable(
+  "Name,Class,Club\nArafat Rahman,8A,Robotics Club\nHasan Ali,8A,Chess Club\nNusrat Islam,7B,Robotics Club\nMehedi Hasan,8A,Robotics Club",
+  true
+);
+const conns = core.findConnectors(roster, {});
+assert(conns.length, 2, "connectors: 8A + Robotics Club only (7B/Chess are unique)");
+assert(conns[0].colKey, "Class", "first connector column");
+assert(conns[0].value, "8A", "first connector value");
+assert(conns[0].rows, [0, 1, 3], "8A members");
+assert(conns[1].colKey, "Club", "second connector column");
+assert(conns[1].value, "Robotics Club", "second connector value");
+assert(conns[1].rows, [0, 2, 3], "Robotics Club members");
+
+// constant column (every row shares the value) → not discriminating
+assert(
+  core.findConnectors(core.normalizeTable("h,School\na,X\nb,X\nc,X", true), {}).length,
+  0,
+  "constant column → no connectors"
+);
+
+// boolean true/false flags are polarity, not entities → skipped
+const flags = core.normalizeTable(
+  "Name,Remote\nAda,true\nAlan,true\nGrace,false\nLinus,true\nMargaret,false",
+  true
+);
+assert(core.findConnectors(flags, {}).length, 0, "boolean flags → no connectors");
+
+// member cap: a value shared by too many rows is skipped
+const bigClub = core.normalizeTable(
+  "h,Club\na,C\nb,C\nc,C\nd,C\ne,C\nf,D",
+  true
+);
+assert(core.findConnectors(bigClub, { maxHubMembers: 4 }).length, 0, "over-membered value skipped");
+assert(core.findConnectors(bigClub, {}).length, 1, "value within member cap kept");
+
+// hub cap
+const manyCols = core.normalizeTable(
+  "a,b,c,d,e,f,g\n1,2,3,4,5,6,7\n1,8,3,4,5,6,9\n1,2,3,9,5,6,9",
+  true
+);
+assert(core.findConnectors(manyCols, { maxHubs: 2 }).length, 2, "maxHubs caps connectors");
+assert(core.findConnectors(manyCols, {}).length, 3, "all discriminating connectors found");
+
+// degenerate inputs
+assert(
+  core.findConnectors(core.normalizeTable("a,b\n1,2", true), {}).length,
+  0,
+  "single row → no connectors"
+);
+assert(core.findConnectors({ headers: ["a"], dataRows: [] }, {}).length, 0, "no rows → none");
+
+// case-insensitive grouping, trimmed values
+const casy = core.normalizeTable("h,Club\na, Robotics \nb,robotics\nc,Chess", true);
+const casyConns = core.findConnectors(casy, {});
+assert(casyConns.length, 1, "case-insensitive connector");
+assert(casyConns[0].value, "Robotics", "value stored trimmed");
+assert(casyConns[0].rows, [0, 1], "case-insensitive members");
+
+// ── rowName ─────────────────────────────────────────────────────────────────
+assert(core.rowName(roster, 0), "Arafat Rahman", "row name from first cell");
+assert(
+  core.rowName(core.normalizeTable("a,b\n,2", true), 0),
+  "2",
+  "first non-empty cell used as name"
+);
+assert(
+  core.rowName({ headers: ["a", "b"], dataRows: [["", ""]] }, 0),
+  "row 1",
+  "fallback name when every cell is empty"
+);
+
+// ── nodeSvgHub ──────────────────────────────────────────────────────────────
+const hubSvg = core.nodeSvgHub("Robotics Club", "club", 160, 46);
+assert(hubSvg.includes("Robotics Club"), true, "hub value text");
+assert(hubSvg.includes(">club<"), true, "hub column text");
+assert(hubSvg.includes('fill="#59b8ff"'), true, "hub column accent color");
+
+// ── thereforeSentence / explainConnection ───────────────────────────────────
+assert(
+  core.thereforeSentence("Club", "Arafat Rahman", null, "Robotics Club"),
+  "Arafat Rahman is a member of Robotics Club.",
+  "single therefore (club)"
+);
+assert(
+  core.thereforeSentence("Club", "Arafat Rahman", "Nusrat Islam", "Robotics Club"),
+  "Arafat Rahman and Nusrat Islam are both members of Robotics Club.",
+  "pair therefore (club)"
+);
+assert(
+  core.thereforeSentence("Team", "A", "B", "Alpha"),
+  "A and B are both members of Alpha.",
+  "team keyword → member phrasing"
+);
+assert(
+  core.thereforeSentence("Class", "A", null, "8A"),
+  "A is in 8A.",
+  "class keyword → 'is in' phrasing"
+);
+assert(
+  core.thereforeSentence("random", "A", "B", "v"),
+  "A and B share the value v.",
+  "fallback phrasing"
+);
+const expl = core.explainConnection("Arafat Rahman", "Club", "Robotics Club", 3);
+assert(expl.includes("Relationship detected"), true, "explanation header");
+assert(expl.includes('Club = "Robotics Club"'), true, "explanation match line");
+assert(
+  expl.includes("Therefore: Arafat Rahman is a member of Robotics Club."),
+  true,
+  "explanation therefore line"
+);
+
+// ── buildGraphElements with connector hubs ──────────────────────────────────
+const hubEls = core.buildGraphElements(roster, {});
+const hubNodes = hubEls.nodes.filter((n) => n.data.kind === "hub");
+assert(hubNodes.length, 2, "hub nodes for connectors");
+assert(hubNodes[0].data.value, "8A", "hub value");
+assert(hubNodes[0].data.colKey, "Class", "hub column");
+assert(hubNodes[0].data.rows, [0, 1, 3], "hub members");
+assert(hubNodes[0].data.svg.includes("8A"), true, "hub svg shows value");
+const hubEdges = hubEls.edges.filter((e) => e.data.hubId);
+assert(hubEdges.length, 6, "3 members × 2 hubs = 6 hub edges");
+assert(
+  hubEdges.some((e) => e.data.source === "hub-1" && e.data.target === "row-2"),
+  true,
+  "hub→row edge for Robotics Club / Nusrat"
+);
+const row0 = hubEls.nodes.find((n) => n.data.id === "row-0");
+assert(row0.data.conns.length, 2, "row-0 belongs to both connectors");
+assert(row0.data.conns[0].hubId, "hub-0", "row conn hub id");
+assert(row0.data.conns[1].value, "Robotics Club", "row conn value");
+assert(
+  hubEls.nodes.some((n) => n.data.id === "row-4"),
+  false,
+  "roster has exactly 4 rows + root (no row-4)"
+);
+
+// data with no repeated values → no hubs, no extra edges
+const noHubEls = core.buildGraphElements(table, {});
+assert(noHubEls.nodes.every((n) => n.data.kind !== "hub"), true, "unique data → no hubs");
+assert(noHubEls.edges.length, 2, "unique data → root edges only");
+
 // ── rowsToCsv round-trip ───────────────────────────────────────────────────
 assert(
   core.rowsToCsv([["a", "b,c"], ["d", '"q"']]),

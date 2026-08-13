@@ -68,6 +68,19 @@ To install it like a real Marketplace add-on (e.g. for other users):
    - Pan / zoom with the mouse or trackpad (buttons in the top-right of the
      canvas too).
    - **Click a row node to select that row in the sheet.**
+   - **Trace connections** — click any node and everything connected to it
+     stays bright while the rest fades: the node, the values it shares with
+     other rows, and every row linked through them (e.g. click a student and
+     see classmates, club-mates, and shared teachers in one place). Click the
+     background (or ✕ in the panel) to clear the trace.
+   - **Find connections** — clicking a node also opens a **connections panel**
+     listing its relationships grouped by column: `club = "Robotics Club"`
+     with every row that shares it. Click a listed row to trace that row.
+   - **Why is this connected?** — click any line between a row and a shared
+     value and the panel explains the relationship: *Source / `club =
+     "Robotics Club"` / Match found in … / Therefore: Arafat Rahman is a
+     member of Robotics Club.* Hovering an edge shows the same explanation as
+     a tooltip.
    - Toggle **First row is header** to switch between header keys and
      letter-named keys (A, B, C…).
    - **Expand the graph** (⛶ in the canvas toolbar) to hide the header,
@@ -152,6 +165,16 @@ The Nodex app also still accepts a `?csv=` base64url query parameter
 
 ## Notes & decisions
 
+- **Smart engine (connector hubs)** — beyond the plain root→row star, the
+  sidebar finds real relationships in your table: any value that appears in
+  2+ rows of the same column becomes a **hub node** linking those rows (e.g.
+  a `club` column with "Robotics Club" on several rows creates a
+  `Robotics Club` node connected to every member). Hubs render as two-line
+  nodes — value on top, column name in blue below. Discovery is capped
+  (25 hubs, 50 members per value) and skips values shared by *every* row
+  (not discriminating), so the graph stays readable; tables with no repeated
+  values render exactly as before. Hubs power the trace highlight, the
+  connections panel, and the edge explanations above.
 - **Visualization mirrors the Nodex web app** — the sidebar renders the same
   graph shape the web app produces for a CSV: a root `[N items]` node with one
   object node per data row, each showing `key: value` rows where keys are blue
